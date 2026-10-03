@@ -20,6 +20,12 @@ import {
   connectionSummary,
   isRestricted,
 } from "@/types";
+import {
+  ACCENT_PRESETS,
+  DEFAULT_ACCENT,
+  buildConnectionUrl,
+  parseConnectionUrl,
+} from "@/lib/connectionUrl";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +62,8 @@ type Draft = {
   engine: Engine;
   categoryId: string | null;
   isFavorite: boolean;
+  accentColor: string;
+  url: string;
   config: ConnectionConfig;
   permissions: Permissions;
 };
@@ -69,26 +77,38 @@ const ENGINES: { id: Engine; label: string; defaultPort?: number }[] = [
 ];
 
 function emptyDraft(): Draft {
+  const engine: Engine = "sqlite";
+  const config: ConnectionConfig = { path: "" };
   return {
     name: "",
-    engine: "sqlite",
+    engine,
     categoryId: null,
     isFavorite: false,
-    config: { path: "" },
+    accentColor: DEFAULT_ACCENT,
+    url: buildConnectionUrl(engine, config),
+    config,
     permissions: { ...FULL_PERMISSIONS },
   };
 }
 
 function fromSaved(c: SavedConnection): Draft {
+  const engine = c.engine as Engine;
+  const config = { ...c.config };
   return {
     id: c.id,
     name: c.name,
-    engine: c.engine as Engine,
+    engine,
     categoryId: c.categoryId,
     isFavorite: c.isFavorite,
-    config: { ...c.config },
+    accentColor: c.accentColor || DEFAULT_ACCENT,
+    url: buildConnectionUrl(engine, config),
+    config,
     permissions: { ...c.permissions },
   };
+}
+
+function syncUrl(d: Draft): Draft {
+  return { ...d, url: buildConnectionUrl(d.engine, d.config) };
 }
 
 export default function Home({ onOpen }: Props) {
@@ -128,7 +148,25 @@ export default function Home({ onOpen }: Props) {
       filters: [{ name: "SQLite", extensions: ["db", "sqlite", "sqlite3"] }],
     });
     if (typeof file === "string" && draft) {
-      setDraft({ ...draft, config: { ...draft.config, path: file } });
+      setDraft(
+        syncUrl({ ...draft, config: { ...draft.config, path: file } }),
+      );
+    }
+  }
+
+  function applyUrl(raw: string) {
+    if (!draft) return;
+    try {
+      const parsed = parseConnectionUrl(raw);
+      setDraft({
+        ...draft,
+        engine: parsed.engine,
+        config: parsed.config,
+        url: raw.trim(),
+      });
+      setError("");
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -136,23 +174,27 @@ export default function Home({ onOpen }: Props) {
     if (!draft) return;
     const meta = ENGINES.find((e) => e.id === engine);
     if (engine === "sqlite") {
-      setDraft({
-        ...draft,
-        engine,
-        config: { path: draft.config.path ?? "" },
-      });
+      setDraft(
+        syncUrl({
+          ...draft,
+          engine,
+          config: { path: draft.config.path ?? "" },
+        }),
+      );
     } else {
-      setDraft({
-        ...draft,
-        engine,
-        config: {
-          host: draft.config.host ?? "127.0.0.1",
-          port: draft.config.port ?? meta?.defaultPort ?? 5432,
-          user: draft.config.user ?? "",
-          password: draft.config.password ?? "",
-          database: draft.config.database ?? "",
-        },
-      });
+      setDraft(
+        syncUrl({
+          ...draft,
+          engine,
+          config: {
+            host: draft.config.host ?? "127.0.0.1",
+            port: draft.config.port ?? meta?.defaultPort ?? 5432,
+            user: draft.config.user ?? "",
+            password: draft.config.password ?? "",
+            database: draft.config.database ?? "",
+          },
+        }),
+      );
     }
   }
 
@@ -166,7 +208,7 @@ export default function Home({ onOpen }: Props) {
       return;
     }
     if (draft.engine !== "sqlite" && !draft.config.host?.trim()) {
-      setError("Host is required.");
+      setError("Host is required (or paste a connection URL).");
       return;
     }
     setBusy(true);
@@ -177,6 +219,7 @@ export default function Home({ onOpen }: Props) {
         engine: draft.engine,
         categoryId: draft.categoryId,
         isFavorite: draft.isFavorite,
+        accentColor: draft.accentColor,
         config: draft.config,
         permissions: draft.permissions,
       };
@@ -278,13 +321,20 @@ export default function Home({ onOpen }: Props) {
     }
   }
 
-  function ConnCard({ c, compact }: { c: SavedConnection; compact?: boolean }) {
+  function ConnCard({ c }: { c: SavedConnection }) {
+    const accent = c.accentColor || DEFAULT_ACCENT;
     return (
-      <Card className={compact ? "py-3" : "py-3"}>
+      <Card
+        className="overflow-hidden py-3"
+        style={{ borderLeftWidth: 4, borderLeftColor: accent }}
+      >
         <CardHeader className="flex flex-row items-center justify-between gap-3 px-4 py-0">
           <div className="min-w-0 flex-1">
             <CardTitle className="flex items-center gap-2 text-base">
-              <Database className="size-4 shrink-0 text-primary" />
+              <Database
+                className="size-4 shrink-0"
+                style={{ color: accent }}
+              />
               <span className="truncate">{c.name}</span>
               <Badge variant="secondary" className="font-mono text-[10px]">
                 {c.engine}
@@ -486,6 +536,64 @@ export default function Home({ onOpen }: Props) {
                 </div>
               </div>
 
+              <div className="grid gap-1.5">
+                <Label htmlFor="conn-url">Connection URL</Label>
+                <Input
+                  id="conn-url"
+                  className="font-mono text-xs"
+                  value={draft.url}
+                  onChange={(e) =>
+                    setDraft({ ...draft, url: e.target.value })
+                  }
+                  onBlur={(e) => {
+                    if (e.target.value.trim()) applyUrl(e.target.value);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      applyUrl(draft.url);
+                    }
+                  }}
+                  placeholder="postgresql://user:pass@host:5432/dbname"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Paste a URL and press Enter / blur to fill fields. Supports
+                  postgresql, mysql, mariadb, mssql, sqlite.
+                </p>
+              </div>
+
+              <div className="grid gap-1.5">
+                <Label>Accent color</Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  {ACCENT_PRESETS.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      title={color}
+                      className="size-6 rounded-full border-2"
+                      style={{
+                        backgroundColor: color,
+                        borderColor:
+                          draft.accentColor === color
+                            ? "var(--foreground)"
+                            : "transparent",
+                      }}
+                      onClick={() =>
+                        setDraft({ ...draft, accentColor: color })
+                      }
+                    />
+                  ))}
+                  <Input
+                    type="color"
+                    className="h-8 w-12 cursor-pointer p-1"
+                    value={draft.accentColor}
+                    onChange={(e) =>
+                      setDraft({ ...draft, accentColor: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+
               {draft.engine === "sqlite" ? (
                 <div className="grid gap-1.5">
                   <Label htmlFor="conn-path">SQLite path</Label>
@@ -495,10 +603,12 @@ export default function Home({ onOpen }: Props) {
                       className="font-mono text-xs"
                       value={draft.config.path ?? ""}
                       onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          config: { ...draft.config, path: e.target.value },
-                        })
+                        setDraft(
+                          syncUrl({
+                            ...draft,
+                            config: { ...draft.config, path: e.target.value },
+                          }),
+                        )
                       }
                       placeholder="/path/to/file.sqlite"
                     />
@@ -514,10 +624,12 @@ export default function Home({ onOpen }: Props) {
                     <Input
                       value={draft.config.host ?? ""}
                       onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          config: { ...draft.config, host: e.target.value },
-                        })
+                        setDraft(
+                          syncUrl({
+                            ...draft,
+                            config: { ...draft.config, host: e.target.value },
+                          }),
+                        )
                       }
                       placeholder="127.0.0.1"
                     />
@@ -528,15 +640,17 @@ export default function Home({ onOpen }: Props) {
                       type="number"
                       value={draft.config.port ?? ""}
                       onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          config: {
-                            ...draft.config,
-                            port: e.target.value
-                              ? Number(e.target.value)
-                              : null,
-                          },
-                        })
+                        setDraft(
+                          syncUrl({
+                            ...draft,
+                            config: {
+                              ...draft.config,
+                              port: e.target.value
+                                ? Number(e.target.value)
+                                : null,
+                            },
+                          }),
+                        )
                       }
                     />
                   </div>
@@ -545,13 +659,15 @@ export default function Home({ onOpen }: Props) {
                     <Input
                       value={draft.config.database ?? ""}
                       onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          config: {
-                            ...draft.config,
-                            database: e.target.value,
-                          },
-                        })
+                        setDraft(
+                          syncUrl({
+                            ...draft,
+                            config: {
+                              ...draft.config,
+                              database: e.target.value,
+                            },
+                          }),
+                        )
                       }
                     />
                   </div>
@@ -560,10 +676,12 @@ export default function Home({ onOpen }: Props) {
                     <Input
                       value={draft.config.user ?? ""}
                       onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          config: { ...draft.config, user: e.target.value },
-                        })
+                        setDraft(
+                          syncUrl({
+                            ...draft,
+                            config: { ...draft.config, user: e.target.value },
+                          }),
+                        )
                       }
                     />
                   </div>
@@ -573,13 +691,15 @@ export default function Home({ onOpen }: Props) {
                       type="password"
                       value={draft.config.password ?? ""}
                       onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          config: {
-                            ...draft.config,
-                            password: e.target.value,
-                          },
-                        })
+                        setDraft(
+                          syncUrl({
+                            ...draft,
+                            config: {
+                              ...draft.config,
+                              password: e.target.value,
+                            },
+                          }),
+                        )
                       }
                     />
                   </div>
@@ -587,9 +707,10 @@ export default function Home({ onOpen }: Props) {
               )}
 
               <div className="grid gap-1.5">
-                <Label>Category</Label>
+                <Label htmlFor="conn-category">Category</Label>
                 <select
-                  className="h-9 rounded-md border bg-background px-2 text-sm"
+                  id="conn-category"
+                  className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30 dark:[color-scheme:dark]"
                   value={draft.categoryId ?? ""}
                   onChange={(e) =>
                     setDraft({
@@ -598,9 +719,15 @@ export default function Home({ onOpen }: Props) {
                     })
                   }
                 >
-                  <option value="">Uncategorized</option>
+                  <option value="" className="bg-popover text-popover-foreground">
+                    Uncategorized
+                  </option>
                   {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
+                    <option
+                      key={cat.id}
+                      value={cat.id}
+                      className="bg-popover text-popover-foreground"
+                    >
                       {cat.name}
                     </option>
                   ))}

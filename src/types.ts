@@ -31,6 +31,7 @@ export type SavedConnection = {
   categoryId: string | null;
   categoryName: string | null;
   isFavorite: boolean;
+  accentColor: string;
   config: ConnectionConfig;
   permissions: Permissions;
 };

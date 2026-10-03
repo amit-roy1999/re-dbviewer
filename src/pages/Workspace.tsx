@@ -164,6 +164,10 @@ export default function Workspace({ connection, onBack }: Props) {
           </div>
           <div className="truncate px-1 text-sm font-semibold">{connection.name}</div>
           <div className="flex flex-wrap items-center gap-1 px-1">
+            <span
+              className="inline-block size-2.5 rounded-full"
+              style={{ backgroundColor: connection.accentColor || "#2563eb" }}
+            />
             <Badge variant="secondary" className="font-mono text-[10px]">
               {connection.engine}
             </Badge>
