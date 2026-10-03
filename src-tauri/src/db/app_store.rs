@@ -120,6 +120,55 @@ impl AppStore {
             )
             .map_err(|e| e.to_string())?;
 
+        // Older builds had path TEXT NOT NULL (SQLite-only). Rebuild so server engines can omit path.
+        self.migrate_path_nullable()?;
+
+        Ok(())
+    }
+
+    fn migrate_path_nullable(&self) -> Result<(), String> {
+        let notnull: i64 = self
+            .conn
+            .query_row(
+                "SELECT \"notnull\" FROM pragma_table_info('connections') WHERE name = 'path'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if notnull == 0 {
+            return Ok(());
+        }
+
+        self.conn
+            .execute_batch(
+                "BEGIN;
+                 CREATE TABLE connections_new (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    engine TEXT NOT NULL,
+                    path TEXT,
+                    category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+                    is_favorite INTEGER NOT NULL DEFAULT 0,
+                    accent_color TEXT NOT NULL DEFAULT '#2563eb',
+                    config_json TEXT,
+                    permissions_json TEXT
+                 );
+                 INSERT INTO connections_new (
+                    id, name, engine, path, category_id, is_favorite,
+                    accent_color, config_json, permissions_json
+                 )
+                 SELECT
+                    id, name, engine,
+                    NULLIF(path, ''),
+                    category_id, is_favorite,
+                    COALESCE(NULLIF(accent_color, ''), '#2563eb'),
+                    config_json, permissions_json
+                 FROM connections;
+                 DROP TABLE connections;
+                 ALTER TABLE connections_new RENAME TO connections;
+                 COMMIT;",
+            )
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -235,7 +284,8 @@ impl AppStore {
         let id = Uuid::new_v4().to_string();
         let cfg_json = serde_json::to_string(config).map_err(|e| e.to_string())?;
         let perms_json = serde_json::to_string(permissions).map_err(|e| e.to_string())?;
-        let path = config.path.clone();
+        // Keep a legacy path column for SQLite; server engines leave it null/empty.
+        let path = config.path.as_deref().filter(|p| !p.is_empty());
         let accent = normalize_accent(accent_color);
         self.conn
             .execute(
@@ -280,7 +330,7 @@ impl AppStore {
                 params![
                     name,
                     engine,
-                    config.path,
+                    config.path.as_deref().filter(|p| !p.is_empty()),
                     category_id,
                     if is_favorite { 1 } else { 0 },
                     accent,

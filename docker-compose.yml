@@ -1,0 +1,16 @@
+services:
+  mysql:
+    image: mysql:8
+    container_name: re-dbviewer-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: redev
+      MYSQL_DATABASE: re_dbviewer
+    volumes:
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-predev"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

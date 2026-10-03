@@ -2,7 +2,7 @@ mod db;
 
 use db::{
     test_engine, AppStore, Category, ConnectionConfig, Permissions, QueryResult, SavedConnection,
-    SchemaNode, SessionState,
+    SchemaNode, SessionState, TableDetails, TableFilter, TableSort,
 };
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -144,20 +144,86 @@ fn list_schema(state: State<'_, AppState>) -> Result<Vec<SchemaNode>, String> {
 }
 
 #[tauri::command]
+fn describe_table(state: State<'_, AppState>, table: String) -> Result<TableDetails, String> {
+    state.session.describe_table(&table)
+}
+
+#[tauri::command]
 fn preview_table(
     state: State<'_, AppState>,
     table: String,
     limit: Option<u32>,
     offset: Option<u32>,
+    filters: Option<Vec<TableFilter>>,
+    sort: Option<TableSort>,
 ) -> Result<QueryResult, String> {
-    state
-        .session
-        .preview_table(&table, limit.unwrap_or(100), offset.unwrap_or(0))
+    let filters = filters.unwrap_or_default();
+    state.session.preview_table(
+        &table,
+        limit.unwrap_or(100),
+        offset.unwrap_or(0),
+        &filters,
+        sort.as_ref(),
+    )
 }
 
 #[tauri::command]
 fn run_sql(state: State<'_, AppState>, sql: String) -> Result<QueryResult, String> {
     state.session.run_sql(&sql)
+}
+
+#[tauri::command]
+fn export_table_csv(
+    state: State<'_, AppState>,
+    table: String,
+    filters: Option<Vec<TableFilter>>,
+    sort: Option<TableSort>,
+) -> Result<String, String> {
+    let filters = filters.unwrap_or_default();
+    state
+        .session
+        .export_table_csv(&table, &filters, sort.as_ref())
+}
+
+#[tauri::command]
+fn export_table_sql(
+    state: State<'_, AppState>,
+    table: String,
+    include_schema: bool,
+    include_data: bool,
+) -> Result<String, String> {
+    state
+        .session
+        .export_table_sql(&table, include_schema, include_data)
+}
+
+#[tauri::command]
+fn import_table_csv(
+    state: State<'_, AppState>,
+    table: String,
+    csv: String,
+    mode: String,
+) -> Result<u64, String> {
+    state.session.import_table_csv(&table, &csv, &mode)
+}
+
+#[tauri::command]
+fn run_sql_script(state: State<'_, AppState>, sql: String) -> Result<u64, String> {
+    state.session.run_sql_script(&sql)
+}
+
+#[tauri::command]
+fn read_text_file(path: String) -> Result<String, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.len() > 50 * 1024 * 1024 {
+        return Err("file exceeds 50MB limit".into());
+    }
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    std::fs::write(&path, contents).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -188,8 +254,15 @@ pub fn run() {
             open_connection,
             close_connection,
             list_schema,
+            describe_table,
             preview_table,
-            run_sql
+            run_sql,
+            export_table_csv,
+            export_table_sql,
+            import_table_csv,
+            run_sql_script,
+            read_text_file,
+            write_text_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
