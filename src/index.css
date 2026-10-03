@@ -151,6 +151,11 @@
 .cm-scroller {
   font-family: var(--font-mono) !important;
 }
+.cm-gutters {
+  background: var(--muted) !important;
+  border-color: var(--border) !important;
+  color: var(--muted-foreground) !important;
+}
 .dark .cm-editor {
   background: var(--card);
 }

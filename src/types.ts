@@ -48,6 +48,59 @@ export type QueryResult = {
   rowsAffected: number | null;
 };
 
+export type ColumnInfo = {
+  name: string;
+  dataType: string;
+  nullable: boolean;
+  defaultValue: string | null;
+  isPk: boolean;
+};
+
+export type ForeignKeyInfo = {
+  name: string;
+  columns: string[];
+  refTable: string;
+  refColumns: string[];
+};
+
+export type IndexInfo = {
+  name: string;
+  unique: boolean;
+  columns: string[];
+};
+
+export type TableDetails = {
+  columns: ColumnInfo[];
+  foreignKeys: ForeignKeyInfo[];
+  indexes: IndexInfo[];
+};
+
+export type FilterOp =
+  | "eq"
+  | "ne"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "like"
+  | "is_null"
+  | "is_not_null";
+
+export type FilterJoin = "and" | "or";
+
+export type TableFilter = {
+  column: string;
+  op: FilterOp;
+  value?: string | null;
+  /** How this row joins the previous one. Ignored on the first row. */
+  join?: FilterJoin;
+};
+
+export type TableSort = {
+  column: string;
+  desc: boolean;
+};
+
 export const FULL_PERMISSIONS: Permissions = {
   allowSelect: true,
   allowInsert: true,

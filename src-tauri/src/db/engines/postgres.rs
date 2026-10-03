@@ -1,7 +1,10 @@
 use tokio_postgres::{NoTls, Row};
 
 use super::super::config::ConnectionConfig;
-use super::super::types::{is_result_query, quote_ident, QueryResult, SchemaNode};
+use super::super::types::{
+    build_filter_sort, is_result_query, quote_ident, split_table, ColumnInfo, ForeignKeyInfo,
+    IndexInfo, PlaceholderStyle, QueryResult, SchemaNode, TableDetails, TableFilter, TableSort,
+};
 
 fn conn_str(config: &ConnectionConfig) -> String {
     let host = config.host_or("127.0.0.1");
@@ -86,10 +89,174 @@ pub async fn preview_table(
     table: &str,
     limit: u32,
     offset: u32,
+    filters: &[TableFilter],
+    sort: Option<&TableSort>,
 ) -> Result<QueryResult, String> {
     let safe = quote_ident(table)?;
-    let sql = format!("SELECT * FROM {safe} LIMIT {limit} OFFSET {offset}");
-    run_query(client, &sql).await
+    let (where_sql, order_sql, binds) =
+        build_filter_sort(filters, sort, quote_ident, PlaceholderStyle::Dollar)?;
+    let n = binds.len();
+    let sql = format!(
+        "SELECT * FROM {safe}{where_sql}{order_sql} LIMIT ${} OFFSET ${}",
+        n + 1,
+        n + 2
+    );
+    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+    for b in &binds {
+        params.push(b);
+    }
+    let lim = limit as i64;
+    let off = offset as i64;
+    params.push(&lim);
+    params.push(&off);
+    run_query_params(client, &sql, &params).await
+}
+
+pub async fn describe_table(
+    client: &tokio_postgres::Client,
+    table: &str,
+) -> Result<TableDetails, String> {
+    let (schema_opt, name) = split_table(table);
+    let schema = schema_opt.unwrap_or("public");
+
+    let col_rows = client
+        .query(
+            "SELECT c.column_name, c.data_type, c.is_nullable, c.column_default,
+                    EXISTS (
+                      SELECT 1 FROM information_schema.table_constraints tc
+                      JOIN information_schema.key_column_usage kcu
+                        ON tc.constraint_name = kcu.constraint_name
+                       AND tc.table_schema = kcu.table_schema
+                      WHERE tc.constraint_type = 'PRIMARY KEY'
+                        AND tc.table_schema = c.table_schema
+                        AND tc.table_name = c.table_name
+                        AND kcu.column_name = c.column_name
+                    ) AS is_pk
+             FROM information_schema.columns c
+             WHERE c.table_schema = $1 AND c.table_name = $2
+             ORDER BY c.ordinal_position",
+            &[&schema, &name],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let columns = col_rows
+        .iter()
+        .map(|r| ColumnInfo {
+            name: r.get(0),
+            data_type: r.get(1),
+            nullable: r.get::<_, String>(2).eq_ignore_ascii_case("YES"),
+            default_value: r.get(3),
+            is_pk: r.get(4),
+        })
+        .collect();
+
+    let fk_rows = client
+        .query(
+            "SELECT tc.constraint_name, kcu.column_name, ccu.table_name, ccu.column_name
+             FROM information_schema.table_constraints tc
+             JOIN information_schema.key_column_usage kcu
+               ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+             JOIN information_schema.constraint_column_usage ccu
+               ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+             WHERE tc.constraint_type = 'FOREIGN KEY'
+               AND tc.table_schema = $1 AND tc.table_name = $2
+             ORDER BY tc.constraint_name, kcu.ordinal_position",
+            &[&schema, &name],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut foreign_keys: Vec<ForeignKeyInfo> = Vec::new();
+    for r in fk_rows {
+        let cname: String = r.get(0);
+        let col: String = r.get(1);
+        let ref_t: String = r.get(2);
+        let ref_c: String = r.get(3);
+        if let Some(fk) = foreign_keys.iter_mut().find(|f| f.name == cname) {
+            fk.columns.push(col);
+            fk.ref_columns.push(ref_c);
+        } else {
+            foreign_keys.push(ForeignKeyInfo {
+                name: cname,
+                columns: vec![col],
+                ref_table: ref_t,
+                ref_columns: vec![ref_c],
+            });
+        }
+    }
+
+    let idx_rows = client
+        .query(
+            "SELECT i.relname, ix.indisunique, a.attname
+             FROM pg_class t
+             JOIN pg_index ix ON t.oid = ix.indrelid
+             JOIN pg_class i ON i.oid = ix.indexrelid
+             JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+             JOIN pg_namespace n ON n.oid = t.relnamespace
+             WHERE n.nspname = $1 AND t.relname = $2
+             ORDER BY i.relname, a.attnum",
+            &[&schema, &name],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut indexes: Vec<IndexInfo> = Vec::new();
+    for r in idx_rows {
+        let iname: String = r.get(0);
+        let unique: bool = r.get(1);
+        let col: String = r.get(2);
+        if let Some(ix) = indexes.iter_mut().find(|i| i.name == iname) {
+            ix.columns.push(col);
+        } else {
+            indexes.push(IndexInfo {
+                name: iname,
+                unique,
+                columns: vec![col],
+            });
+        }
+    }
+
+    Ok(TableDetails {
+        columns,
+        foreign_keys,
+        indexes,
+    })
+}
+
+async fn run_query_params(
+    client: &tokio_postgres::Client,
+    sql: &str,
+    params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
+) -> Result<QueryResult, String> {
+    let rows = client
+        .query(sql, params)
+        .await
+        .map_err(|e| e.to_string())?;
+    if rows.is_empty() {
+        let stmt = client.prepare(sql).await.map_err(|e| e.to_string())?;
+        let columns = stmt
+            .columns()
+            .iter()
+            .map(|c| c.name().to_string())
+            .collect();
+        return Ok(QueryResult {
+            columns,
+            rows: vec![],
+            rows_affected: None,
+        });
+    }
+    let columns: Vec<String> = rows[0]
+        .columns()
+        .iter()
+        .map(|c| c.name().to_string())
+        .collect();
+    let data = rows.iter().map(row_to_json).collect();
+    Ok(QueryResult {
+        columns,
+        rows: data,
+        rows_affected: None,
+    })
 }
 
 pub async fn run_sql(
