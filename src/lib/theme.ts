@@ -9,6 +9,7 @@ export function getStoredTheme(): Theme {
 
 export function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle("dark", theme === "dark");
+  document.documentElement.style.colorScheme = theme;
   localStorage.setItem(KEY, theme);
 }
 

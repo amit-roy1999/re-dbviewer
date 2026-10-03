@@ -23,6 +23,7 @@ pub struct SavedConnection {
     pub category_id: Option<String>,
     pub category_name: Option<String>,
     pub is_favorite: bool,
+    pub accent_color: String,
     pub config: ConnectionConfig,
     pub permissions: Permissions,
 }
@@ -58,6 +59,7 @@ impl AppStore {
                     path TEXT,
                     category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
                     is_favorite INTEGER NOT NULL DEFAULT 0,
+                    accent_color TEXT NOT NULL DEFAULT '#2563eb',
                     config_json TEXT,
                     permissions_json TEXT
                 );",
@@ -77,6 +79,10 @@ impl AppStore {
             .execute("ALTER TABLE connections ADD COLUMN config_json TEXT", []);
         let _ = self.conn.execute(
             "ALTER TABLE connections ADD COLUMN permissions_json TEXT",
+            [],
+        );
+        let _ = self.conn.execute(
+            "ALTER TABLE connections ADD COLUMN accent_color TEXT NOT NULL DEFAULT '#2563eb'",
             [],
         );
 
@@ -135,8 +141,8 @@ impl AppStore {
             serde_json::to_string(&Permissions::default()).map_err(|e| e.to_string())?;
         self.conn
             .execute(
-                "INSERT INTO connections (id, name, engine, path, category_id, is_favorite, config_json, permissions_json)
-                 VALUES (?1, ?2, 'sqlite', ?3, NULL, 1, ?4, ?5)",
+                "INSERT INTO connections (id, name, engine, path, category_id, is_favorite, accent_color, config_json, permissions_json)
+                 VALUES (?1, ?2, 'sqlite', ?3, NULL, 1, '#2563eb', ?4, ?5)",
                 params![
                     id,
                     "Starter SQLite",
@@ -153,6 +159,7 @@ impl AppStore {
         let config_json: Option<String> = r.get(6)?;
         let permissions_json: Option<String> = r.get(7)?;
         let path: Option<String> = r.get(8)?;
+        let accent: Option<String> = r.get(9)?;
         let config = if let Some(j) = config_json.filter(|s| !s.is_empty()) {
             serde_json::from_str(&j).unwrap_or_default()
         } else if let Some(p) = path {
@@ -172,6 +179,9 @@ impl AppStore {
             category_id: r.get(3)?,
             category_name: r.get(4)?,
             is_favorite: fav != 0,
+            accent_color: accent
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "#2563eb".into()),
             config,
             permissions,
         })
@@ -182,7 +192,8 @@ impl AppStore {
             .conn
             .prepare(
                 "SELECT c.id, c.name, c.engine, c.category_id, cat.name,
-                        c.is_favorite, c.config_json, c.permissions_json, c.path
+                        c.is_favorite, c.config_json, c.permissions_json, c.path,
+                        c.accent_color
                  FROM connections c
                  LEFT JOIN categories cat ON cat.id = c.category_id
                  ORDER BY c.is_favorite DESC, c.name COLLATE NOCASE",
@@ -199,7 +210,8 @@ impl AppStore {
         self.conn
             .query_row(
                 "SELECT c.id, c.name, c.engine, c.category_id, cat.name,
-                        c.is_favorite, c.config_json, c.permissions_json, c.path
+                        c.is_favorite, c.config_json, c.permissions_json, c.path,
+                        c.accent_color
                  FROM connections c
                  LEFT JOIN categories cat ON cat.id = c.category_id
                  WHERE c.id = ?1",
@@ -215,6 +227,7 @@ impl AppStore {
         engine: &str,
         category_id: Option<&str>,
         is_favorite: bool,
+        accent_color: &str,
         config: &ConnectionConfig,
         permissions: &Permissions,
     ) -> Result<SavedConnection, String> {
@@ -223,10 +236,11 @@ impl AppStore {
         let cfg_json = serde_json::to_string(config).map_err(|e| e.to_string())?;
         let perms_json = serde_json::to_string(permissions).map_err(|e| e.to_string())?;
         let path = config.path.clone();
+        let accent = normalize_accent(accent_color);
         self.conn
             .execute(
-                "INSERT INTO connections (id, name, engine, path, category_id, is_favorite, config_json, permissions_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO connections (id, name, engine, path, category_id, is_favorite, accent_color, config_json, permissions_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     id,
                     name,
@@ -234,6 +248,7 @@ impl AppStore {
                     path,
                     category_id,
                     if is_favorite { 1 } else { 0 },
+                    accent,
                     cfg_json,
                     perms_json
                 ],
@@ -249,23 +264,26 @@ impl AppStore {
         engine: &str,
         category_id: Option<&str>,
         is_favorite: bool,
+        accent_color: &str,
         config: &ConnectionConfig,
         permissions: &Permissions,
     ) -> Result<(), String> {
         validate_engine(engine)?;
         let cfg_json = serde_json::to_string(config).map_err(|e| e.to_string())?;
         let perms_json = serde_json::to_string(permissions).map_err(|e| e.to_string())?;
+        let accent = normalize_accent(accent_color);
         let n = self
             .conn
             .execute(
                 "UPDATE connections SET name=?1, engine=?2, path=?3, category_id=?4,
-                 is_favorite=?5, config_json=?6, permissions_json=?7 WHERE id=?8",
+                 is_favorite=?5, accent_color=?6, config_json=?7, permissions_json=?8 WHERE id=?9",
                 params![
                     name,
                     engine,
                     config.path,
                     category_id,
                     if is_favorite { 1 } else { 0 },
+                    accent,
                     cfg_json,
                     perms_json,
                     id
@@ -372,6 +390,15 @@ fn validate_engine(engine: &str) -> Result<(), String> {
     match engine {
         "sqlite" | "postgres" | "mysql" | "mariadb" | "mssql" => Ok(()),
         _ => Err(format!("unsupported engine: {engine}")),
+    }
+}
+
+fn normalize_accent(color: &str) -> String {
+    let c = color.trim();
+    if c.starts_with('#') && (c.len() == 7 || c.len() == 4) {
+        c.to_string()
+    } else {
+        "#2563eb".into()
     }
 }
 

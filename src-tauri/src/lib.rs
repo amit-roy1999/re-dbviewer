@@ -64,6 +64,7 @@ fn save_connection(
     engine: String,
     category_id: Option<String>,
     is_favorite: bool,
+    accent_color: Option<String>,
     config: ConnectionConfig,
     permissions: Permissions,
 ) -> Result<SavedConnection, String> {
@@ -72,6 +73,7 @@ fn save_connection(
         &engine,
         category_id.as_deref(),
         is_favorite,
+        accent_color.as_deref().unwrap_or("#2563eb"),
         &config,
         &permissions,
     )
@@ -85,6 +87,7 @@ fn update_connection(
     engine: String,
     category_id: Option<String>,
     is_favorite: bool,
+    accent_color: Option<String>,
     config: ConnectionConfig,
     permissions: Permissions,
 ) -> Result<(), String> {
@@ -94,6 +97,7 @@ fn update_connection(
         &engine,
         category_id.as_deref(),
         is_favorite,
+        accent_color.as_deref().unwrap_or("#2563eb"),
         &config,
         &permissions,
     )
