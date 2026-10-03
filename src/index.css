@@ -1,0 +1,161 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "IBM Plex Sans", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    @apply h-full m-0;
+  }
+  body {
+    @apply bg-background text-foreground font-sans text-sm antialiased;
+  }
+}
+
+/* Light dense SQL-tool: slate neutrals + teal steel accent */
+:root {
+  --background: #f4f6f8;
+  --foreground: #1a2332;
+  --card: #ffffff;
+  --card-foreground: #1a2332;
+  --popover: #ffffff;
+  --popover-foreground: #1a2332;
+  --primary: #0f766e;
+  --primary-foreground: #f0fdfa;
+  --secondary: #e8eef3;
+  --secondary-foreground: #1a2332;
+  --muted: #e8eef3;
+  --muted-foreground: #5b6b7c;
+  --accent: #dce8e6;
+  --accent-foreground: #0f766e;
+  --destructive: #b91c1c;
+  --border: #d0d7e0;
+  --input: #d0d7e0;
+  --ring: #0f766e;
+  --chart-1: #0f766e;
+  --chart-2: #5b6b7c;
+  --chart-3: #334155;
+  --chart-4: #94a3b8;
+  --chart-5: #cbd5e1;
+  --radius: 0.4rem;
+  --sidebar: #eef2f6;
+  --sidebar-foreground: #1a2332;
+  --sidebar-primary: #0f766e;
+  --sidebar-primary-foreground: #f0fdfa;
+  --sidebar-accent: #dde8e6;
+  --sidebar-accent-foreground: #0f766e;
+  --sidebar-border: #d0d7e0;
+  --sidebar-ring: #0f766e;
+}
+
+.dark {
+  --background: #0f1419;
+  --foreground: #e8eef3;
+  --card: #171d25;
+  --card-foreground: #e8eef3;
+  --popover: #171d25;
+  --popover-foreground: #e8eef3;
+  --primary: #2dd4bf;
+  --primary-foreground: #042f2e;
+  --secondary: #1e2733;
+  --secondary-foreground: #e8eef3;
+  --muted: #1e2733;
+  --muted-foreground: #94a3b8;
+  --accent: #1a2e2c;
+  --accent-foreground: #5eead4;
+  --destructive: #f87171;
+  --border: #2a3441;
+  --input: #2a3441;
+  --ring: #2dd4bf;
+  --chart-1: #2dd4bf;
+  --chart-2: #94a3b8;
+  --chart-3: #64748b;
+  --chart-4: #475569;
+  --chart-5: #334155;
+  --sidebar: #12171e;
+  --sidebar-foreground: #e8eef3;
+  --sidebar-primary: #2dd4bf;
+  --sidebar-primary-foreground: #042f2e;
+  --sidebar-accent: #1a2e2c;
+  --sidebar-accent-foreground: #5eead4;
+  --sidebar-border: #2a3441;
+  --sidebar-ring: #2dd4bf;
+}
+
+/* CodeMirror densetool theme */
+.cm-editor {
+  height: 100%;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--card);
+  color: var(--foreground);
+}
+.cm-editor.cm-focused {
+  outline: none;
+}
+.cm-scroller {
+  font-family: var(--font-mono) !important;
+}
+.dark .cm-editor {
+  background: var(--card);
+}
+.dark .cm-gutters {
+  background: var(--sidebar);
+  border-color: var(--border);
+  color: var(--muted-foreground);
+}

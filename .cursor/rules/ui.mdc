@@ -1,0 +1,16 @@
+---
+description: UI work on re-dbviewer — apply design and shadcn skills
+globs:
+  - src/**/*.tsx
+  - src/**/*.css
+  - src/components/**/*
+alwaysApply: false
+---
+
+When changing UI in this project:
+
+1. Read and follow `.cursor/skills/frontend-design/SKILL.md` for visual direction (dense light SQL-tool; slate + teal; IBM Plex Sans/Mono).
+2. Read and follow `.cursor/skills/shadcn-context/SKILL.md` — compose from `src/components/ui`.
+3. Read and follow `.cursor/skills/vercel-react-best-practices/SKILL.md` for React performance.
+4. Keep CodeMirror for SQL; do not switch to Monaco.
+5. Stay light: no extra UI kits, no dark-mode-by-default.
