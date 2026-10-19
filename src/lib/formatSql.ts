@@ -136,7 +136,8 @@ export function formatSql(sql: string): string {
     const raw = tokens[t];
     const lower = raw.toLowerCase();
     const isKw = KEYWORDS.has(lower) && /^[a-z_]+$/i.test(raw);
-    const word = isKw ? lower.toUpperCase() : raw;
+    // Preserve the author's casing (do not force UPPERCASE keywords).
+    const word = raw;
 
     if (t > 0 && BREAK_BEFORE.has(lower) && isKw) {
       parts.push("\n");

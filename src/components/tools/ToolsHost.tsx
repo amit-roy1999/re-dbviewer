@@ -9,14 +9,16 @@ import { AdminPanel } from "@/components/tools/AdminPanel";
 import { EerDiagram } from "@/components/tools/EerDiagram";
 import { SchemaCompare } from "@/components/tools/SchemaCompare";
 import { MigrationWizard } from "@/components/tools/MigrationWizard";
+import { FakeDataFactory } from "@/components/tools/FakeDataFactory";
 
-export type ToolId = "admin" | "eer" | "compare" | "migrate";
+export type ToolId = "admin" | "eer" | "compare" | "migrate" | "fakeData";
 
 const TITLES: Record<ToolId, string> = {
   admin: "Server Admin",
   eer: "EER Diagram",
   compare: "Schema Compare",
   migrate: "Migration Wizard",
+  fakeData: "Fake Data Factory",
 };
 
 /** Full-size dialog hosting the admin/modeling tools; they act on the front connection. */
@@ -49,6 +51,9 @@ export function ToolsHost({
           ) : null}
           {connection && tool === "compare" ? <SchemaCompare connection={connection} /> : null}
           {connection && tool === "migrate" ? <MigrationWizard connection={connection} /> : null}
+          {connection && tool === "fakeData" ? (
+            <FakeDataFactory connection={connection} />
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>

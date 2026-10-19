@@ -1,6 +1,7 @@
 mod app_store;
 mod config;
 mod engines;
+pub mod fake_data;
 mod permissions;
 pub mod secrets;
 mod session;

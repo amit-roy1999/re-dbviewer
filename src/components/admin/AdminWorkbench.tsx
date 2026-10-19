@@ -370,6 +370,7 @@ function ProcessesView({ connection }: { connection: SavedConnection }) {
           </Alert>
         ) : (
           <AdminTable
+            fill
             result={results[0] ?? null}
             actionLabel="Kill"
             action={(row) => (
@@ -535,6 +536,7 @@ function UsersView({ connection }: { connection: SavedConnection }) {
           </Alert>
         ) : (
           <AdminTable
+            fill
             result={results[0] ?? null}
             actionLabel="Actions"
             action={(row) => (
@@ -556,7 +558,7 @@ function UsersView({ connection }: { connection: SavedConnection }) {
           />
         )}
         {grants ? (
-          <div className="flex max-h-56 min-h-0 flex-col gap-1">
+          <div className="flex max-h-56 shrink-0 flex-col gap-1">
             <h3 className="text-xs font-medium text-muted-foreground">
               Grants for {grants.who}
             </h3>
@@ -593,7 +595,7 @@ function VariablesView({ connection }: { connection: SavedConnection }) {
               <AlertDescription>{statusQ.errors[0]}</AlertDescription>
             </Alert>
           ) : (
-            <AdminTable result={statusQ.results[0] ?? null} />
+            <AdminTable fill result={statusQ.results[0] ?? null} />
           )}
         </div>
         <div className="flex min-h-0 flex-col gap-1">
@@ -605,7 +607,7 @@ function VariablesView({ connection }: { connection: SavedConnection }) {
               <AlertDescription>{varsQ.errors[0]}</AlertDescription>
             </Alert>
           ) : (
-            <AdminTable result={varsQ.results[0] ?? null} />
+            <AdminTable fill result={varsQ.results[0] ?? null} />
           )}
         </div>
       </div>
@@ -630,9 +632,9 @@ function LogsView({ connection }: { connection: SavedConnection }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PanelHeader title="Server Logs" busy={busy} onRefresh={() => void load()} />
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
+      <div className="min-h-0 flex-1 space-y-4 overflow-auto p-3">
         {results.map((r, i) => (
-          <div key={i} className="flex min-h-0 flex-col gap-1">
+          <section key={i} className="space-y-1.5">
             <h3 className="text-xs font-medium text-muted-foreground">
               {labels[i]}
             </h3>
@@ -645,7 +647,7 @@ function LogsView({ connection }: { connection: SavedConnection }) {
             ) : (
               <AdminTable result={r} />
             )}
-          </div>
+          </section>
         ))}
       </div>
     </div>
@@ -679,9 +681,9 @@ function PerfReportsView({ connection }: { connection: SavedConnection }) {
         busy={busy}
         onRefresh={() => void load()}
       />
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
+      <div className="min-h-0 flex-1 space-y-4 overflow-auto p-3">
         {results.map((r, i) => (
-          <div key={i} className="flex min-h-0 flex-col gap-1">
+          <section key={i} className="space-y-1.5">
             <h3 className="text-xs font-medium text-muted-foreground">
               {labels[i]}
             </h3>
@@ -695,7 +697,7 @@ function PerfReportsView({ connection }: { connection: SavedConnection }) {
             ) : (
               <AdminTable result={r} />
             )}
-          </div>
+          </section>
         ))}
       </div>
     </div>
@@ -750,6 +752,13 @@ function PerfSchemaSetupView({ connection }: { connection: SavedConnection }) {
     "perfSchemaSetup",
   );
   const my = isMysqlFamily(connection.engine);
+  const labels = my
+    ? [
+        "performance_schema enabled",
+        "Consumers",
+        "Instruments (sample)",
+      ]
+    : ["Stats-related settings", "Extensions"];
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -758,15 +767,22 @@ function PerfSchemaSetupView({ connection }: { connection: SavedConnection }) {
         busy={busy}
         onRefresh={() => void load()}
       />
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
+      <div className="min-h-0 flex-1 space-y-4 overflow-auto p-3">
         <Alert>
           <AlertDescription>
-            Read-only view of {my ? "performance_schema consumers/instruments" : "stats-related settings"}.
-            Toggling instruments requires SUPER / SYSTEM_VARIABLES_ADMIN and is not done from this client.
+            Read-only view of{" "}
+            {my
+              ? "performance_schema consumers/instruments"
+              : "stats-related settings"}
+            . Toggling instruments requires SUPER / SYSTEM_VARIABLES_ADMIN and
+            is not done from this client.
           </AlertDescription>
         </Alert>
         {results.map((r, i) => (
-          <div key={i} className="flex min-h-0 flex-col gap-1">
+          <section key={i} className="space-y-1.5">
+            <h3 className="text-xs font-medium text-muted-foreground">
+              {labels[i] ?? `Result ${i + 1}`}
+            </h3>
             {errors[i] ? (
               <Alert variant="destructive">
                 <AlertDescription>{errors[i]}</AlertDescription>
@@ -774,7 +790,7 @@ function PerfSchemaSetupView({ connection }: { connection: SavedConnection }) {
             ) : (
               <AdminTable result={r} />
             )}
-          </div>
+          </section>
         ))}
       </div>
     </div>
@@ -890,7 +906,10 @@ export function AdminWorkbench({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div
+      data-testid="admin-workbench"
+      className="flex h-full min-h-0 flex-col bg-background"
+    >
       <AdminViewBody connection={connection} view={view} actions={actions} />
     </div>
   );

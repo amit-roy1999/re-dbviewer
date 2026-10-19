@@ -30,6 +30,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
+import { installDiagnosticsListeners, logError } from "@/lib/diagnostics";
 
 export default function App() {
   // Multi-connection: every open connection keeps its own mounted Workspace; one is in front.
@@ -59,7 +60,7 @@ export default function App() {
       try {
         await invoke("set_active_connection", { id });
       } catch {
-        // session lost; workspace will surface errors
+        logError("set_active_connection failed");
       }
     }
     setActiveId(id);
@@ -117,6 +118,7 @@ export default function App() {
   useEffect(() => {
     applyPreferenceEffects(loadPreferences());
     trackEditFocus();
+    return installDiagnosticsListeners();
   }, []);
 
   // App-level shortcuts: zoom, disconnect, new window, prefs.

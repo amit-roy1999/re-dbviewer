@@ -13,6 +13,18 @@ npm install
 npm run tauri dev
 ```
 
+## Tests
+
+```bash
+npm test              # Vitest (src/lib + component RTL)
+npm run test:ui       # Vitest component tests only
+npm run test:rust     # cargo test in src-tauri
+npm run test:e2e      # Playwright browser flows (mocked Tauri IPC)
+npm run test:all      # unit + rust + e2e
+```
+
+First-time Playwright setup: `npx playwright install chromium`
+
 ## Local MySQL (Docker)
 
 ```bash
@@ -37,6 +49,8 @@ npm run tauri build -- --bundles appimage
 
 | Doc | Description |
 |-----|-------------|
-| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Full user guide for built features |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Full user guide (workspace, SQL editor, admin, tools, diagnostics) |
 | [docs/README.md](docs/README.md) | Doc index + how to keep guides updated |
-| [GOALS.md](GOALS.md) | Product goals |
+| [GOALS.md](GOALS.md) | Product goals (includes later: GitHub Releases for free downloads) |
+
+Reporting a bug? Preferences → **Export diagnostics…** and attach the file to the GitHub issue (local log only; no passwords/SQL/hosts).

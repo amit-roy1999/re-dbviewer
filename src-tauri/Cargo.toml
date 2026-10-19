@@ -29,6 +29,9 @@ arboard = "3"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 postgres-native-tls = "0.5"
 native-tls = "0.2"
+log = { version = "0.4", features = ["std"] }
+fake = { version = "3", features = ["derive"] }
+rand = "0.8"
 
 [profile.release]
 codegen-units = 1

@@ -47,7 +47,7 @@ Top of the window:
 | **Edit** | Format SQL (`Ctrl+Shift+F`), Undo / Redo (editor), Cut / Copy / Paste (act on the last focused editor or text field). |
 | **Query** | Run Script (`Ctrl+Shift+Enter`), Stop, Begin / Commit / Rollback. |
 | **View** | Toggle History, Snippets, Context Help; Search Data… (`Ctrl+Shift+H`); Inspect Table…; Schema Inspector…; Preferences…; **Keyboard shortcuts…**; Toggle theme. |
-| **Tools** | Server Admin (Workbench Administration), EER Diagram, Schema Compare, Migration Wizard. See [Tools](#tools) and [Administration](#administration). |
+| **Tools** | Server Admin (Workbench Administration), EER Diagram, Schema Compare, Migration Wizard, Fake Data Factory. See [Tools](#tools) and [Administration](#administration). |
 
 `Ctrl+T/W/O/S/Shift+S/Shift+F` also work from the keyboard (⌘ on macOS). **View → Keyboard shortcuts…** lists them all (including `Ctrl+Enter`, `Ctrl+Shift+Enter`, `Ctrl+Shift+Q`, `Ctrl+,`).
 
@@ -112,11 +112,15 @@ The backend enforces these on SQL; the UI also disables some actions when INSERT
 
 After you **Open** a connection you get:
 
-1. **Left:** entity browser (schemas / tables / views) with filter.
+1. **Left:** entity browser (schemas / tables / views) with filter. Drag the right edge of the sidebar to resize (width is remembered).
 2. **Center:** tabs — one or more **Query** tabs, table **data** (`table [all]`), table **structure**, and **Table editor** tabs.
 3. **Bottom:** query **Output / History** panel (collapsed by default) and the status footer (row counts, paging, page size, refresh, add row, settings).
 
+When a query result (or Explain / script results) is showing, drag the bar between the SQL editor and the results pane to resize the editor height (also remembered).
+
 Click a table to open data. Use the wrench (or double-click) for structure. Footer **Structure** / **Data** switches between those tabs.
+
+Click the **connection name** in the sidebar to switch between **Objects** and **Administration** (MySQL / MariaDB / PostgreSQL). The SQL editor stays mounted while you are in Administration so it is still there when you switch back.
 
 **Reconnect** (File menu) closes and reopens the live session, refreshes the schema, and keeps your tabs.
 
@@ -150,10 +154,12 @@ Edit column name / type / nullability / default / PK, see the generated DDL, the
 ## SQL editor (Query tab)
 
 - Write SQL in the CodeMirror editor. Autocomplete knows table names and (for opened / first ~30 tables) column names, using the connection's SQL dialect.
+- **Casing** — keyword autocomplete and **Format** keep the casing you type (they do not force `UPPERCASE`). Table/column names follow what the database reports.
+- **Dark mode** — syntax highlighting and the autocomplete popup use high-contrast colors that match the app theme.
 - **Multiple query tabs** — **+** (or `Ctrl+T`) adds *Query N*. Each tab keeps its own SQL text, result, Explain output / view and Analyze setting. Close with **×** or `Ctrl+W`; at least one query tab always stays open.
 - **Run** or **Ctrl/⌘+Enter** — executes the **selection** if there is one, otherwise the **statement under the cursor** (statements are split on `;`). Footer shows rows and duration.
 - **Open / Save** (toolbar or File menu) — load a `.sql` file into the active query tab; Save writes back to the same path, Save As picks a new one. The tab is renamed to the file name.
-- **Format** — pretty-prints the selection, or the whole editor if nothing is selected.
+- **Format** — pretty-prints the selection, or the whole editor if nothing is selected (whitespace / line breaks only; casing unchanged).
 - **Snippets** (toolbar / View menu) — side panel with built-in and saved snippets. Click to insert at the cursor (`${table}` becomes the selected table). **Save editor as snippet** stores the current editor text per connection.
 - **History** — **Output / History** panel at the bottom of the workspace (collapsed by default; View → Toggle History). Lists recent Run / Explain statements per connection with status and duration; click one to insert it at the cursor. The **Text** toggle beside **History** is a plain scrolling session log of OK / error lines appended on every Run / Explain / script (not saved; **Clear** empties it).
 - **Export result CSV** (toolbar download icon / File menu) — saves the current query result (or Explain plan) as CSV.
@@ -179,7 +185,7 @@ One statement at a time for permission checks; use **Import SQL file** for multi
 
 ## Preferences, scripts and productivity
 
-- **Preferences** (File / View, `Ctrl+,`): app zoom (%), editor font size (applies live to the SQL editor), tab size, soft wrap, default LIMIT (initial rows per page), confirm DELETE / DROP / TRUNCATE, and high contrast. Stored locally.
+- **Preferences** (File / View, `Ctrl+,`): app zoom (%), editor font size (applies live to the SQL editor), tab size, soft wrap, default LIMIT (initial rows per page), confirm DELETE / DROP / TRUNCATE, high contrast, and **Export diagnostics…**. Stored locally.
 - **Zoom** — `Ctrl/⌘ + +` zoom in, `Ctrl/⌘ + -` zoom out, `Ctrl/⌘ + 0` reset (also under View). Scales the whole UI (50–200%).
 - **Confirm destructive** — with the preference on, running `DROP` / `TRUNCATE` / `DELETE` from the editor (or deleting rows from the grid) asks first.
 - **Run script** (`Script` button, `Ctrl+Shift+Enter`) — runs every statement in the selection (or whole editor), continuing after errors. Results appear as **Result 1..N** tabs under the editor (✓ / ✗ per statement).
@@ -261,9 +267,16 @@ Structure tab sections:
 
 - **Columns** — name, type, nullable, default, primary key; filter columns; refresh; export schema SQL.
 - **Indexes** — name, unique, columns.
-- **Relations** — foreign keys (columns → referenced table/columns).
+- **Relations** — interactive join builder (not only a FK list):
+  - Graph of the current table plus related tables in **both** directions (FKs from this table, and tables that reference it).
+  - Click a related card to **include** it in the query; check columns in the side list.
+  - **Expand** on a related card loads that table’s further relations for nested joins.
+  - Choose **LEFT** or **INNER** join; preview SQL updates live.
+  - **Filters** — optional `WHERE` rows (table, column, operator, value; AND/OR). Operators match the data grid (`=`, `≠`, `>`, `LIKE`, `IS NULL`, …). Excluding a table drops its filters.
+  - **Open in query tab** (or Copy) sends the generated `SELECT` to the editor so you can run or edit it.
+  - Longer product vision / future ideas: [VISION_RELATION_QUERY_BUILDER.md](VISION_RELATION_QUERY_BUILDER.md).
 
-Metadata comes from the engine (`describe_table` / native DDL where available).
+Metadata comes from the engine (`describe_table` / native DDL where available). Inbound FKs use catalog queries (or a SQLite pragma scan).
 
 ---
 
@@ -302,14 +315,31 @@ Open from the **Tools** menu; they act on the connection tab in front.
 - **EER Diagram**: reverse engineers tables and foreign keys into a read-only diagram. **Forward engineer → query tab** generates CREATE TABLE / FK / index SQL from the diagram; **Copy SQL** copies it. **Validate** lists tables without a primary key and foreign keys to missing tables; **Export SVG** saves the diagram.
 - **Schema Compare**: compares the current schema (A) with another schema, another saved connection, or a `.sql` file (B) and lists missing tables/columns, type differences and (when B is a schema or connection) index-name and foreign-key-name differences.
 - **Migration Wizard**: choose source and target saved connections, list and tick tables, then create tables and/or copy data in batches. Same-engine pairs copy the source DDL. For different engines, tables are created from mapped column types (editable **Type mapping** rules; only NOT NULL and primary keys carry over). A progress line shows `table i/n, rows copied`. Sessions the wizard opens are closed afterwards.
+- **Fake Data Factory**: seed tables with synthetic rows (Rust batch inserts).
+  1. Check tables on the left (search to filter). **+ related** adds FK parents/children.
+  2. Set row counts (presets or per table). Choose **Append** (keeps data; IDs continue after max) or **Clear, then fill** (needs DELETE/DDL; confirms first).
+  3. Click **Generate**. Column generators default from types/names/FKs — open **Customize columns** only when you need overrides.
+  - Optional seed under Advanced for reproducible runs. Caps: 50 tables, 100k rows/table, 500k total. Vision: [VISION_FAKE_DATA_FACTORY.md](VISION_FAKE_DATA_FACTORY.md).
 - **Explain**: the **Visual** tab is a Workbench-style color-coded plan diagram (not a bar chart).
 
 ---
 
-## Theme
+## Theme and branding
 
 - Home and workspace theme toggles, plus **View → Toggle theme**.
 - Preference is stored locally (light / dark).
+- The app mark (teal grid + cursor) appears in the menu bar and on the Home header (`src/assets/logo.svg`).
+
+---
+
+## Diagnostics (local logs)
+
+re-dbviewer writes a **local-only** error log while you use the app. Nothing is uploaded.
+
+- **Where:** under the app data directory, `logs/re-dbviewer.log` (on Linux typically `~/.local/share/com.amit.re-dbviewer/logs/`). Soft-rotated when large.
+- **Export:** Preferences (`Ctrl+,`) → **Export diagnostics…** → save a `.txt` file. Attach that file when filing a GitHub issue.
+- **Privacy:** passwords are never logged. The export includes app/OS version, engine list, and a redacted log tail — **not** SQL text, hostnames, or usernames (redaction also strips common `password=` / `host=` / `user=` tokens and IPv4 addresses).
+- **Development:** the same file is useful when reproducing bugs locally; uncaught UI errors are appended automatically.
 
 ---
 

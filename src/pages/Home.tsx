@@ -27,6 +27,8 @@ import {
   parseConnectionUrl,
 } from "@/lib/connectionUrl";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { AppLogo } from "@/components/AppLogo";
+import { logError } from "@/lib/diagnostics";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -260,6 +262,7 @@ export default function Home({ onOpen }: Props) {
       );
     } catch (e) {
       setError(String(e));
+      logError(`test_connection failed engine=${draft.engine}`);
     } finally {
       setBusy(false);
     }
@@ -272,6 +275,7 @@ export default function Home({ onOpen }: Props) {
       onOpen(await invoke<SavedConnection>("open_connection", { id }));
     } catch (e) {
       setError(String(e));
+      logError("open_connection failed");
     } finally {
       setBusy(false);
     }
@@ -361,6 +365,7 @@ export default function Home({ onOpen }: Props) {
     const accent = c.accentColor || DEFAULT_ACCENT;
     return (
       <Card
+        data-testid={`connection-card-${c.id}`}
         className="overflow-hidden py-3"
         style={{ borderLeftWidth: 4, borderLeftColor: accent }}
       >
@@ -390,7 +395,12 @@ export default function Home({ onOpen }: Props) {
             </CardDescription>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <Button size="sm" disabled={busy} onClick={() => openConn(c.id)}>
+            <Button
+              data-testid={`btn-open-connection-${c.id}`}
+              size="sm"
+              disabled={busy}
+              onClick={() => openConn(c.id)}
+            >
               Open
             </Button>
             <DropdownMenu>
@@ -414,6 +424,7 @@ export default function Home({ onOpen }: Props) {
                       );
                     } catch (e) {
                       setError(String(e));
+                      logError(`test_connection failed engine=${c.engine}`);
                     }
                   }}
                 >
@@ -559,10 +570,16 @@ export default function Home({ onOpen }: Props) {
   }
 
   return (
-    <div className="mx-auto flex h-full max-w-4xl flex-col gap-5 overflow-auto p-6">
+    <div
+      data-testid="home-root"
+      className="mx-auto flex h-full max-w-4xl flex-col gap-5 overflow-auto p-6"
+    >
       <header className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">re-dbviewer</h1>
+          <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+            <AppLogo className="size-7 rounded-md" />
+            re-dbviewer
+          </h1>
           <p className="text-sm text-muted-foreground">
             Favorites, categories, and multi-engine connections.
           </p>
@@ -578,6 +595,7 @@ export default function Home({ onOpen }: Props) {
             Categories
           </Button>
           <Button
+            data-testid="btn-new-connection"
             disabled={busy}
             onClick={() => {
               setError("");

@@ -37,7 +37,7 @@ export function defaultTypeMap(target: string): TypeRule[] {
 }
 
 export function mapType(dataType: string, rules: TypeRule[]): string {
-  const m = /^\s*([^(]*?)\s*(\([^)]*\))?\s*(.*)$/.exec(dataType) ?? [];
+  const m = /^\s*([^(]+)\s*(\([^)]*\))?/.exec(dataType) ?? [];
   const base = (m[1] ?? dataType).trim().toUpperCase();
   const rule = rules.find((x) => x.from.trim().toUpperCase() === base && x.to.trim());
   if (!rule) return dataType || "TEXT";

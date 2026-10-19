@@ -1,8 +1,10 @@
 mod db;
+mod diagnostics;
 
 use db::{
-    keyring_store, test_engine, AppStore, Category, ConnectionConfig, Permissions, QueryResult, SavedConnection,
-    SchemaNode, SessionState, TableDetails, TableFilter, TableSort,
+    fake_data::{FakeDataPlan, FakeDataResult},
+    keyring_store, test_engine, AppStore, Category, ConnectionConfig, Permissions, QueryResult,
+    SavedConnection, SchemaNode, SessionState, TableDetails, TableFilter, TableSort,
 };
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -193,14 +195,26 @@ fn delete_connection(state: State<'_, AppState>, id: String) -> Result<(), Strin
 
 #[tauri::command]
 fn test_connection(engine: String, config: ConnectionConfig) -> Result<String, String> {
-    test_engine(&engine, &config)
+    match test_engine(&engine, &config) {
+        Ok(msg) => Ok(msg),
+        Err(e) => {
+            log::error!("test_connection failed engine={engine}");
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
 fn open_connection(state: State<'_, AppState>, id: String) -> Result<SavedConnection, String> {
     let conn = hydrate(state.store.lock().map_err(|e| e.to_string())?.get(&id)?);
-    state.session.open(conn.clone())?;
-    Ok(conn)
+    let engine = conn.engine.clone();
+    match state.session.open(conn.clone()) {
+        Ok(()) => Ok(conn),
+        Err(e) => {
+            log::error!("open_connection failed engine={engine}");
+            Err(e)
+        }
+    }
 }
 
 /// Closes `connection_id`, or the active connection when omitted.
@@ -267,6 +281,17 @@ fn run_sql(
     connection_id: Option<String>,
 ) -> Result<QueryResult, String> {
     state.session.run_sql_on(connection_id.as_deref(), &sql)
+}
+
+#[tauri::command]
+fn generate_fake_data(
+    state: State<'_, AppState>,
+    plan: FakeDataPlan,
+    connection_id: Option<String>,
+) -> Result<FakeDataResult, String> {
+    state
+        .session
+        .generate_fake_data_on(connection_id.as_deref(), plan)
 }
 
 #[tauri::command]
@@ -350,6 +375,16 @@ fn write_text_file(path: String, contents: String) -> Result<(), String> {
     std::fs::write(&path, contents).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn append_log(level: String, message: String) -> Result<(), String> {
+    diagnostics::append(&level, &message)
+}
+
+#[tauri::command]
+fn read_diagnostics() -> Result<String, String> {
+    diagnostics::read_bundle()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -357,7 +392,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-            let store = AppStore::open(data_dir)?;
+            if let Err(e) = diagnostics::init(&data_dir) {
+                eprintln!("diagnostics init failed: {e}");
+            }
+            let store = match AppStore::open(data_dir) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("app store open failed");
+                    return Err(e.into());
+                }
+            };
             app.manage(AppState {
                 store: Mutex::new(store),
                 session: SessionState::new(),
@@ -384,6 +428,7 @@ pub fn run() {
             describe_table,
             preview_table,
             run_sql,
+            generate_fake_data,
             export_table_csv,
             export_table_sql,
             import_table_csv,
@@ -391,7 +436,9 @@ pub fn run() {
             read_text_file,
             write_text_file,
             write_clipboard,
-            read_clipboard
+            read_clipboard,
+            append_log,
+            read_diagnostics
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

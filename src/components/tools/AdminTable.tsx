@@ -9,6 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 const cell = (v: unknown) =>
   v === null || v === undefined
@@ -23,11 +24,14 @@ export function AdminTable({
   actionLabel,
   action,
   emptyText = "No rows.",
+  /** When true, grow to fill a flex parent (single-table panes). Default stacks safely. */
+  fill = false,
 }: {
   result: QueryResult | null;
   actionLabel?: string;
   action?: (row: unknown[], cols: string[]) => ReactNode;
   emptyText?: string;
+  fill?: boolean;
 }) {
   const [q, setQ] = useState("");
   const rows = useMemo(() => {
@@ -41,8 +45,13 @@ export function AdminTable({
 
   if (!result) return null;
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
-      <div className="flex items-center gap-2">
+    <div
+      className={cn(
+        "flex flex-col gap-2",
+        fill ? "min-h-0 flex-1" : "shrink-0",
+      )}
+    >
+      <div className="flex shrink-0 items-center gap-2">
         <Input
           className="h-7 max-w-xs text-xs"
           placeholder="Search…"
@@ -53,7 +62,12 @@ export function AdminTable({
           {rows.length} / {result.rows.length} rows
         </span>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border">
+      <div
+        className={cn(
+          "overflow-auto rounded-md border border-border",
+          fill ? "min-h-0 flex-1" : "max-h-72",
+        )}
+      >
         <Table>
           <TableHeader>
             <TableRow>
@@ -62,7 +76,9 @@ export function AdminTable({
                   {c}
                 </TableHead>
               ))}
-              {action ? <TableHead className="text-xs">{actionLabel}</TableHead> : null}
+              {action ? (
+                <TableHead className="text-xs">{actionLabel}</TableHead>
+              ) : null}
             </TableRow>
           </TableHeader>
           <TableBody>

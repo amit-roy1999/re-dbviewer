@@ -202,4 +202,47 @@ mod tests {
         assert!(assert_sql_allowed(&p, "DELETE FROM users").is_err());
         assert!(assert_sql_allowed(&p, "UPDATE users SET x=1").is_ok());
     }
+
+    #[test]
+    fn permission_matrix() {
+        let mut p = Permissions::default();
+        p.allow_select = false;
+        assert!(assert_sql_allowed(&p, "SELECT 1").is_err());
+        assert!(assert_sql_allowed(&p, "EXPLAIN SELECT 1").is_err());
+
+        p = Permissions::default();
+        p.allow_insert = false;
+        assert!(assert_sql_allowed(&p, "INSERT INTO t VALUES (1)").is_err());
+        assert!(assert_sql_allowed(&p, "SELECT 1").is_ok());
+
+        p = Permissions::default();
+        p.allow_update = false;
+        assert!(assert_sql_allowed(&p, "UPDATE t SET a=1").is_err());
+
+        p = Permissions::default();
+        p.allow_ddl = false;
+        assert!(assert_sql_allowed(&p, "DROP TABLE t").is_err());
+        assert!(assert_sql_allowed(&p, "TRUNCATE TABLE t").is_err());
+        assert!(assert_sql_allowed(&p, "GRANT SELECT ON t TO u").is_err());
+    }
+
+    #[test]
+    fn classify_sql_kinds() {
+        assert_eq!(classify_sql("SELECT 1").unwrap(), SqlKind::Select);
+        assert_eq!(classify_sql("WITH x AS (SELECT 1) SELECT * FROM x").unwrap(), SqlKind::Select);
+        assert_eq!(classify_sql("INSERT INTO t VALUES (1)").unwrap(), SqlKind::Insert);
+        assert_eq!(classify_sql("UPDATE t SET a=1").unwrap(), SqlKind::Update);
+        assert_eq!(classify_sql("DELETE FROM t").unwrap(), SqlKind::Delete);
+        assert_eq!(classify_sql("CREATE TABLE t (id INT)").unwrap(), SqlKind::Ddl);
+        assert!(classify_sql("").is_err());
+        assert!(classify_sql("SELECT 1; DELETE FROM t").is_err());
+    }
+
+    #[test]
+    fn is_restricted_flag() {
+        assert!(!Permissions::default().is_restricted());
+        let mut p = Permissions::default();
+        p.allow_delete = false;
+        assert!(p.is_restricted());
+    }
 }

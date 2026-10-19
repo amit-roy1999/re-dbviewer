@@ -259,7 +259,7 @@ function ResultGridInner({
   };
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto">
+    <div data-testid="result-grid" className="min-h-0 flex-1 overflow-auto">
       <Table className="border-separate border-spacing-0">
         <TableHeader>
           <TableRow className="hover:bg-transparent">

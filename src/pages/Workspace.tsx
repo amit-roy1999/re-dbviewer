@@ -13,6 +13,7 @@ import {
 } from "@codemirror/lang-sql";
 import { keymap } from "@codemirror/view";
 import { defaultKeymap } from "@codemirror/commands";
+import { isDomDark, sqlHighlightExt } from "@/lib/cmSqlHighlight";
 import {
   ArrowLeft,
   Play,
@@ -68,6 +69,7 @@ import { isRestricted } from "@/types";
 import { ResultGrid } from "@/components/ResultGrid";
 import { VisualExplain } from "@/components/VisualExplain";
 import { JsonResultView } from "@/components/JsonResultView";
+import { RelationQueryBuilder } from "@/components/RelationQueryBuilder";
 import { QueryHistoryPanel } from "@/components/QueryHistoryPanel";
 import { SnippetsPanel } from "@/components/SnippetsPanel";
 import { ResultPinBar, type PinnedResult } from "@/components/ResultPinBar";
@@ -175,6 +177,8 @@ import {
 import { adminSupported } from "@/lib/adminSql";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { AdminWorkbench } from "@/components/admin/AdminWorkbench";
+import { ResizeHandle, clamp } from "@/components/ResizeHandle";
+import { logError } from "@/lib/diagnostics";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -471,6 +475,14 @@ export default function Workspace({
   );
   const [adminView, setAdminView] =
     useState<AdminViewId>(DEFAULT_ADMIN_VIEW);
+  const [sidebarW, setSidebarW] = useState(() => {
+    const n = Number(localStorage.getItem("re-dbviewer.sidebarW"));
+    return Number.isFinite(n) && n >= 180 ? n : 240;
+  });
+  const [editorH, setEditorH] = useState(() => {
+    const n = Number(localStorage.getItem("re-dbviewer.editorH"));
+    return Number.isFinite(n) && n >= 96 ? n : 208;
+  });
   /** C13: plain-text session log shown in the history panel's Text mode. */
   const [textLog, setTextLog] = useState<string[]>([]);
   /** E6: queue cell edits and apply them in one transaction. */
@@ -505,6 +517,7 @@ export default function Workspace({
   const runScriptRef = useRef<() => void>(() => {});
   const [schemaComp] = useState(() => new Compartment());
   const [prefsComp] = useState(() => new Compartment());
+  const [highlightComp] = useState(() => new Compartment());
   const schemaMapRef = useRef<Record<string, SQLNamespace>>({});
   const helpOpenRef = useRef(false);
   helpOpenRef.current = helpOpen;
@@ -561,6 +574,7 @@ export default function Workspace({
     } catch (e) {
       setError(String(e));
       setSchemaReady(true);
+      logError("list_schema failed");
     }
   }
 
@@ -629,12 +643,13 @@ export default function Workspace({
       parent: editorHost.current,
       extensions: [
         basicSetup,
+        highlightComp.of(sqlHighlightExt(isDomDark())),
         prefsComp.of(viewPrefsExt(loadPreferences())),
         schemaComp.of(
           sql({
             dialect: dialectFor(engine),
             schema: schemaMapRef.current,
-            upperCaseKeywords: true,
+            upperCaseKeywords: false,
           }),
         ),
         keymap.of([
@@ -666,7 +681,17 @@ export default function Workspace({
     });
     editorRef.current = view;
     const unregister = registerEditor(view);
+    const themeObs = new MutationObserver(() => {
+      view.dispatch({
+        effects: highlightComp.reconfigure(sqlHighlightExt(isDomDark())),
+      });
+    });
+    themeObs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
     return () => {
+      themeObs.disconnect();
       unregister();
       view.destroy();
       editorRef.current = null;
@@ -698,7 +723,7 @@ export default function Workspace({
         sql({
           dialect: dialectFor(engine),
           schema: map,
-          upperCaseKeywords: true,
+          upperCaseKeywords: false,
         }),
       ),
     });
@@ -2370,6 +2395,7 @@ export default function Workspace({
     } catch (e) {
       setStatus("");
       setError(`Reconnect failed: ${String(e)}`);
+      logError(`reconnect failed engine=${engine}`);
     } finally {
       setBusy(false);
     }
@@ -3150,10 +3176,16 @@ export default function Workspace({
         : null;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div
+      data-testid="workspace-root"
+      className="flex h-full min-h-0 flex-col bg-background"
+    >
       <div className="flex min-h-0 flex-1">
         {/* Entity browser */}
-        <aside className="flex w-[240px] shrink-0 flex-col border-r border-border bg-card">
+        <aside
+          className="flex shrink-0 flex-col border-r border-border bg-card"
+          style={{ width: sidebarW }}
+        >
           <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
             <Button
               variant="ghost"
@@ -3170,6 +3202,7 @@ export default function Workspace({
           <div className="border-b border-border px-3 py-2">
             <button
               type="button"
+              data-testid="btn-workspace-mode"
               className={cn(
                 "block w-full truncate text-left text-sm font-semibold hover:text-primary",
                 workspaceMode === "admin" && "text-primary",
@@ -3585,8 +3618,19 @@ export default function Workspace({
             </>
           )}
         </aside>
+        <ResizeHandle
+          axis="x"
+          className="z-10 -ml-px border-r border-border"
+          onDelta={(d) =>
+            setSidebarW((w) => {
+              const next = clamp(w + d, 180, 480);
+              localStorage.setItem("re-dbviewer.sidebarW", String(next));
+              return next;
+            })
+          }
+        />
 
-        {/* Main */}
+        {/* Main — keep objects tree mounted in admin so CodeMirror survives */}
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           {workspaceMode === "admin" ? (
             <AdminWorkbench
@@ -3598,8 +3642,15 @@ export default function Workspace({
                 restoreSql: () => void importSqlFile(),
               }}
             />
-          ) : (
-            <>
+          ) : null}
+          <div
+            className={
+              workspaceMode === "admin"
+                ? "hidden"
+                : "flex min-h-0 min-w-0 flex-1 flex-col"
+            }
+            aria-hidden={workspaceMode === "admin"}
+          >
           {/* Tab strip */}
           <div className="flex items-stretch border-b border-border bg-card">
             <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
@@ -3904,6 +3955,7 @@ export default function Workspace({
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
+                        data-testid="btn-run-query"
                         size="sm"
                         disabled={busy}
                         onClick={() => void runSql()}
@@ -3990,13 +4042,35 @@ export default function Workspace({
               </div>
               <div
                 ref={editorHost}
+                data-testid="sql-editor"
                 className={cn(
                   "overflow-auto border-b border-border bg-card",
                   (q.result || q.explainResult || q.script) && sqlVisible
-                    ? "h-52 shrink-0"
+                    ? "shrink-0"
                     : "min-h-0 flex-1",
                 )}
+                style={
+                  (q.result || q.explainResult || q.script) && sqlVisible
+                    ? { height: editorH }
+                    : undefined
+                }
               />
+              {(q.result || q.explainResult || q.script) && sqlVisible ? (
+                <ResizeHandle
+                  axis="y"
+                  className="z-10 border-b border-border"
+                  onDelta={(d) =>
+                    setEditorH((h) => {
+                      const next = clamp(h + d, 96, 560);
+                      localStorage.setItem(
+                        "re-dbviewer.editorH",
+                        String(next),
+                      );
+                      return next;
+                    })
+                  }
+                />
+              ) : null}
               {sqlVisible && q.explainResult ? (
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                   <div className="flex shrink-0 items-center gap-1 border-b border-border px-3 py-1">
@@ -4186,8 +4260,7 @@ export default function Workspace({
               {sqlVisible &&
               q.result &&
               !q.explainResult &&
-              canEditQuery &&
-              dataView === "grid" ? (
+              canEditQuery ? (
                 <BatchEditBar
                   enabled={batchMode}
                   onToggle={setBatchMode}
@@ -4199,7 +4272,16 @@ export default function Workspace({
               ) : null}
               {sqlVisible && q.result && !q.explainResult ? (
                 dataView === "json" ? (
-                  <JsonResultView result={q.result} />
+                  <JsonResultView
+                    result={q.result}
+                    onCellEdit={
+                      canEditQuery
+                        ? (rowIndex, column, value) =>
+                            handleCellEdit(rowIndex, column, value)
+                        : undefined
+                    }
+                    cellOverride={queuedValue}
+                  />
                 ) : (
                   <ResultGrid
                     result={q.result}
@@ -4411,7 +4493,7 @@ export default function Workspace({
                 </div>
               </div>
 
-              {dataView === "grid" && connection.permissions.allowUpdate ? (
+              {connection.permissions.allowUpdate ? (
                 <BatchEditBar
                   enabled={batchMode}
                   onToggle={setBatchMode}
@@ -4427,6 +4509,12 @@ export default function Workspace({
                   <JsonResultView
                     result={findView.result}
                     hiddenColumns={hiddenColumns}
+                    onCellEdit={(rowIndex, column, value) =>
+                      handleCellEdit(mapIdx(rowIndex), column, value)
+                    }
+                    cellOverride={(rowIndex, column) =>
+                      queuedValue(mapIdx(rowIndex), column)
+                    }
                   />
                 ) : (
                   <ResultGrid
@@ -4623,40 +4711,19 @@ export default function Workspace({
               ) : null}
 
               {activeTab.section === "relations" ? (
-                <div className="min-h-0 flex-1 overflow-auto p-3">
-                  {!details?.foreignKeys.length ? (
-                    <p className="text-sm text-muted-foreground">
-                      No foreign keys.
-                    </p>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="h-8 text-xs">Name</TableHead>
-                          <TableHead className="h-8 text-xs">Columns</TableHead>
-                          <TableHead className="h-8 text-xs">
-                            References
-                          </TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {details.foreignKeys.map((fk) => (
-                          <TableRow key={fk.name}>
-                            <TableCell className="py-2 font-mono text-xs">
-                              {fk.name}
-                            </TableCell>
-                            <TableCell className="py-2 font-mono text-xs">
-                              {fk.columns.join(", ")}
-                            </TableCell>
-                            <TableCell className="py-2 font-mono text-xs">
-                              {fk.refTable}({fk.refColumns.join(", ")})
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  )}
-                </div>
+                details ? (
+                  <RelationQueryBuilder
+                    table={activeTab.table}
+                    engine={engine}
+                    connectionId={connection.id}
+                    details={details}
+                    onOpenSql={(sqlText) => newQueryTab(sqlText)}
+                  />
+                ) : (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    Loading table metadata…
+                  </div>
+                )
               ) : null}
             </div>
           ) : null}
@@ -4738,8 +4805,7 @@ export default function Workspace({
             textLog={textLog}
             onClearText={() => setTextLog([])}
           />
-            </>
-          )}
+          </div>
         </main>
       </div>
 

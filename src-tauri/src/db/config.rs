@@ -100,3 +100,71 @@ impl ConnectionConfig {
         self.database.as_deref().filter(|d| !d.is_empty()).unwrap_or(default)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn database_or_and_defaults() {
+        let empty = ConnectionConfig::default();
+        assert_eq!(empty.database_or("postgres"), "postgres");
+        assert_eq!(empty.host_or("127.0.0.1"), "127.0.0.1");
+        assert_eq!(empty.user_or("root"), "root");
+        assert_eq!(empty.password_or(), "");
+
+        let cfg = ConnectionConfig {
+            database: Some("app".into()),
+            host: Some("db.local".into()),
+            user: Some("u".into()),
+            password: Some("p".into()),
+            ..Default::default()
+        };
+        assert_eq!(cfg.database_or("postgres"), "app");
+        assert_eq!(cfg.host_or("127.0.0.1"), "db.local");
+        assert_eq!(cfg.user_or("root"), "u");
+        assert_eq!(cfg.password_or(), "p");
+
+        let blank_db = ConnectionConfig {
+            database: Some("".into()),
+            ..Default::default()
+        };
+        assert_eq!(blank_db.database_or("main"), "main");
+    }
+
+    #[test]
+    fn sqlite_path_and_ssl() {
+        let cfg = ConnectionConfig::sqlite_path("/tmp/a.db");
+        assert_eq!(cfg.path_or_err().unwrap(), "/tmp/a.db");
+        assert!(!cfg.ssl_enabled());
+
+        let ssl = ConnectionConfig {
+            ssl_mode: Some("require".into()),
+            ssl_ca: Some(" /ca.pem ".into()),
+            ..Default::default()
+        };
+        assert!(ssl.ssl_enabled());
+        assert_eq!(ssl.ssl_ca_path(), Some("/ca.pem"));
+
+        let disabled = ConnectionConfig {
+            ssl_mode: Some("disable".into()),
+            ..Default::default()
+        };
+        assert!(!disabled.ssl_enabled());
+    }
+
+    #[test]
+    fn serde_round_trip() {
+        let cfg = ConnectionConfig {
+            host: Some("localhost".into()),
+            port: Some(5432),
+            database: Some("db".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: ConnectionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.host.as_deref(), Some("localhost"));
+        assert_eq!(back.port, Some(5432));
+        assert_eq!(back.database_or(""), "db");
+    }
+}

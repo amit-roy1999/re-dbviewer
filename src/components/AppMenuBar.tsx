@@ -23,6 +23,7 @@ import {
 import { useWorkspaceActions } from "@/lib/workspaceActions";
 import { cn } from "@/lib/utils";
 import type { ToolId } from "@/components/tools/ToolsHost";
+import { AppLogo } from "@/components/AppLogo";
 
 type Props = {
   connected: boolean;
@@ -63,12 +64,7 @@ export function AppMenuBar({
 
   return (
     <header className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-card px-2">
-      <span
-        className="mr-1 inline-flex size-5 items-center justify-center rounded-sm bg-primary text-[10px] font-bold text-primary-foreground"
-        aria-hidden
-      >
-        re
-      </span>
+      <AppLogo className="mr-1" />
 
       <DropdownMenu>
         <DropdownMenuTrigger className={cn(menuBtn)}>File</DropdownMenuTrigger>
@@ -342,6 +338,7 @@ export function AppMenuBar({
               ["eer", "EER Diagram / Forward Engineer…"],
               ["compare", "Schema Compare…"],
               ["migrate", "Migration Wizard…"],
+              ["fakeData", "Fake Data Factory…"],
             ] as const
           ).map(([id, label]) => (
             <DropdownMenuItem

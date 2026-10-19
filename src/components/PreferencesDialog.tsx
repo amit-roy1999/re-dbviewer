@@ -8,6 +8,7 @@ import {
   loadPreferences,
   savePreferences,
 } from "@/lib/preferences";
+import { exportDiagnostics, logError } from "@/lib/diagnostics";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -19,9 +20,13 @@ type Props = {
 
 export function PreferencesDialog({ open, onClose, onSaved }: Props) {
   const [prefs, setPrefs] = useState<AppPreferences>(DEFAULT_PREFS);
+  const [exportStatus, setExportStatus] = useState("");
 
   useEffect(() => {
-    if (open) setPrefs(loadPreferences());
+    if (open) {
+      setPrefs(loadPreferences());
+      setExportStatus("");
+    }
   }, [open]);
 
   if (!open) return null;
@@ -142,6 +147,38 @@ export function PreferencesDialog({ open, onClose, onSaved }: Props) {
             />
             High contrast
           </label>
+          <div className="border-t border-border pt-3">
+            <div className="mb-1 font-medium text-foreground">Diagnostics</div>
+            <p className="mb-2 text-[11px] text-muted-foreground">
+              Local error log only — no network upload. Export omits passwords,
+              SQL, hostnames, and usernames.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      const ok = await exportDiagnostics();
+                      setExportStatus(ok ? "Saved." : "Cancelled.");
+                    } catch {
+                      setExportStatus("Export failed.");
+                      logError("export_diagnostics failed");
+                    }
+                  })();
+                }}
+              >
+                Export diagnostics…
+              </Button>
+              {exportStatus ? (
+                <span className="text-[11px] text-muted-foreground">
+                  {exportStatus}
+                </span>
+              ) : null}
+            </div>
+          </div>
         </div>
         <div className="flex justify-end gap-2 border-t border-border px-4 py-2">
           <Button size="sm" variant="ghost" onClick={onClose}>

@@ -200,3 +200,84 @@ pub fn is_result_query(sql: &str) -> bool {
         || lower.starts_with("explain")
         || lower.starts_with("values")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quote_ident_accepts_and_rejects() {
+        assert_eq!(quote_ident("users").unwrap(), "\"users\"");
+        assert_eq!(quote_ident("public.users").unwrap(), "\"public\".\"users\"");
+        assert!(quote_ident("").is_err());
+        assert!(quote_ident("a\"b").is_err());
+        assert!(quote_ident("a-b").is_err());
+        assert_eq!(quote_ident_mysql("t").unwrap(), "`t`");
+        assert!(quote_ident_mysql("a`b").is_err());
+    }
+
+    #[test]
+    fn build_filter_sort_styles() {
+        let filters = vec![
+            TableFilter {
+                column: "id".into(),
+                op: "eq".into(),
+                value: Some("1".into()),
+                join: None,
+            },
+            TableFilter {
+                column: "name".into(),
+                op: "like".into(),
+                value: Some("%a%".into()),
+                join: Some("or".into()),
+            },
+        ];
+        let sort = TableSort {
+            column: "id".into(),
+            desc: true,
+        };
+
+        let (w, o, b) =
+            build_filter_sort(&filters, Some(&sort), quote_ident, PlaceholderStyle::Question)
+                .unwrap();
+        assert!(w.contains("\"id\" = ?"));
+        assert!(w.contains("OR \"name\" LIKE ?"));
+        assert_eq!(o, " ORDER BY \"id\" DESC");
+        assert_eq!(b, vec!["1".to_string(), "%a%".to_string()]);
+
+        let (w, _, b) =
+            build_filter_sort(&filters, None, quote_ident, PlaceholderStyle::Dollar).unwrap();
+        assert!(w.contains("$1"));
+        assert!(w.contains("$2"));
+        assert_eq!(b.len(), 2);
+
+        let (w, _, b) = build_filter_sort(
+            &filters[..1],
+            None,
+            quote_ident,
+            PlaceholderStyle::Inline,
+        )
+        .unwrap();
+        assert!(w.contains("\"id\" = '1'"));
+        assert!(b.is_empty());
+
+        let null_f = [TableFilter {
+            column: "x".into(),
+            op: "is_null".into(),
+            value: None,
+            join: None,
+        }];
+        let (w, _, b) =
+            build_filter_sort(&null_f, None, quote_ident_mysql, PlaceholderStyle::Question)
+                .unwrap();
+        assert_eq!(w, " WHERE `x` IS NULL");
+        assert!(b.is_empty());
+    }
+
+    #[test]
+    fn is_result_query_detects_reads() {
+        assert!(is_result_query("SELECT 1"));
+        assert!(is_result_query("  with x as (select 1) select * from x"));
+        assert!(!is_result_query("DELETE FROM t"));
+    }
+}
