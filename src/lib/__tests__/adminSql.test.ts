@@ -45,7 +45,6 @@ describe("adminSql", () => {
           ["Uptime", "65"],
           ["Threads_connected", "3"],
         ],
-        rowsAffected: null,
       }),
     ).toEqual({ Uptime: "65", Threads_connected: "3" });
     expect(fmtUptime(65)).toContain("s");
