@@ -5,7 +5,9 @@ export type AdminTab =
   | "variables"
   | "users"
   | "performance"
-  | "logs";
+  | "logs"
+  | "serverStatus"
+  | "perfSchemaSetup";
 
 const MYSQL_SYS = "'mysql','information_schema','performance_schema','sys'";
 
@@ -43,7 +45,6 @@ export function adminSql(engine: string, tab: AdminTab): string[] {
       return my
         ? [
             "SHOW VARIABLES LIKE '%log%'",
-            // MySQL 8.0.22+; errors on MariaDB / older servers and is shown as a message.
             "SELECT logged, prio, error_code, subsystem, data FROM performance_schema.error_log ORDER BY logged DESC LIMIT 200",
           ]
         : [
@@ -57,14 +58,36 @@ export function adminSql(engine: string, tab: AdminTab): string[] {
             "SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime','Threads_connected','Threads_running','Questions','Slow_queries')",
             `SELECT table_schema, table_name, table_rows, ROUND((data_length+index_length)/1024/1024,2) AS size_mb, ROUND(data_free/1024/1024,2) AS free_mb FROM information_schema.tables WHERE table_schema NOT IN (${MYSQL_SYS}) AND table_type = 'BASE TABLE' ORDER BY (data_length+index_length) DESC LIMIT 25`,
             `SELECT object_schema, object_name, count_star AS io_ops, ROUND(sum_timer_wait/1000000000000,3) AS wait_s FROM performance_schema.table_io_waits_summary_by_table WHERE object_schema NOT IN (${MYSQL_SYS}) ORDER BY sum_timer_wait DESC LIMIT 25`,
-            // G3: needs performance_schema (default on in MySQL 5.6+; often off in MariaDB).
             "SELECT LEFT(digest_text, 120) AS statement, schema_name, count_star AS calls, ROUND(sum_timer_wait/1000000000000,3) AS total_s, ROUND(avg_timer_wait/1000000000000,6) AS avg_s, sum_rows_examined AS rows_examined FROM performance_schema.events_statements_summary_by_digest WHERE digest_text IS NOT NULL ORDER BY sum_timer_wait DESC LIMIT 15",
           ]
         : [
             "SELECT version()::text AS version, (now() - pg_postmaster_start_time())::text AS uptime, (SELECT count(*) FROM pg_stat_activity)::text AS connections",
             "SELECT schemaname::text AS schema, relname::text AS table, seq_scan::text AS seq_scan, idx_scan::text AS idx_scan, n_live_tup::text AS live_rows, n_dead_tup::text AS dead_rows, pg_size_pretty(pg_total_relation_size(relid))::text AS total_size FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 25",
-            // G3: needs the pg_stat_statements extension (PG 13+ column names).
             "SELECT left(query, 120)::text AS statement, calls::text AS calls, round(total_exec_time::numeric, 1)::text AS total_ms, round(mean_exec_time::numeric, 2)::text AS mean_ms, rows::text AS rows FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 15",
+          ];
+    case "serverStatus":
+      return my
+        ? [
+            "SELECT VERSION() AS version, @@hostname AS hostname, @@port AS port, @@version_comment AS version_comment, @@version_compile_os AS compile_os, @@version_compile_machine AS compile_machine",
+            "SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime','Threads_connected','Threads_running','Questions','Slow_queries','Bytes_received','Bytes_sent','Com_select','Innodb_buffer_pool_pages_total','Innodb_buffer_pool_pages_free','Innodb_data_reads','Innodb_data_writes','Key_read_requests','Key_reads')",
+            "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('basedir','datadir','plugin_dir','tmpdir','socket','port','performance_schema','have_ssl','have_openssl','general_log','slow_query_log','log_error','version','version_comment')",
+            "SHOW PLUGINS",
+          ]
+        : [
+            "SELECT version()::text AS version, inet_server_addr()::text AS host, inet_server_port()::text AS port, current_setting('data_directory') AS datadir, current_setting('config_file') AS config_file, (now() - pg_postmaster_start_time())::text AS uptime",
+            "SELECT 'connections' AS name, count(*)::text AS value FROM pg_stat_activity UNION ALL SELECT 'db_size', pg_size_pretty(pg_database_size(current_database()))::text",
+            "SELECT name::text AS name, setting::text AS value FROM pg_settings WHERE name IN ('data_directory','config_file','log_directory','port','ssl','shared_preload_libraries') ORDER BY name",
+          ];
+    case "perfSchemaSetup":
+      return my
+        ? [
+            "SELECT @@performance_schema AS performance_schema_enabled",
+            "SELECT NAME AS consumer, ENABLED FROM performance_schema.setup_consumers ORDER BY NAME",
+            "SELECT NAME AS instrument, ENABLED, TIMED FROM performance_schema.setup_instruments WHERE NAME LIKE 'statement/%' OR NAME LIKE 'wait/io/table/%' OR NAME LIKE 'memory/%' ORDER BY NAME LIMIT 200",
+          ]
+        : [
+            "SELECT name::text AS name, setting::text AS setting FROM pg_settings WHERE name LIKE '%stat%' OR name = 'shared_preload_libraries' ORDER BY name",
+            "SELECT extname::text AS extension, extversion::text AS version FROM pg_extension WHERE extname IN ('pg_stat_statements') ORDER BY 1",
           ];
   }
 }
@@ -99,4 +122,30 @@ export function createUserSql(
   if (p.grantDb.trim())
     sql += `;\nGRANT ALL PRIVILEGES ON DATABASE ${ident(p.grantDb.trim())} TO ${ident(p.user)}`;
   return sql;
+}
+
+/** Map status/variable rows (name,value) into a lookup. */
+export function kvMap(result: { columns: string[]; rows: unknown[][] } | null): Record<string, string> {
+  if (!result?.rows.length) return {};
+  const out: Record<string, string> = {};
+  for (const row of result.rows) {
+    const k = String(row[0] ?? "");
+    const v = row[1] == null ? "" : String(row[1]);
+    if (k) out[k] = v;
+  }
+  return out;
+}
+
+export function fmtUptime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const parts: string[] = [];
+  if (d) parts.push(`${d}d`);
+  if (h || d) parts.push(`${h}h`);
+  if (m || h || d) parts.push(`${m}m`);
+  parts.push(`${s}s`);
+  return parts.join(" ");
 }

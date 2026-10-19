@@ -30,6 +30,7 @@ import {
   RefreshCw,
   Minus,
   Settings,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Activity,
@@ -167,6 +168,13 @@ import {
   type TableAdvanced,
 } from "@/lib/tableDdl";
 import type { WorkspaceActions } from "@/lib/workspaceActions";
+import {
+  DEFAULT_ADMIN_VIEW,
+  type AdminViewId,
+} from "@/lib/adminNav";
+import { adminSupported } from "@/lib/adminSql";
+import { AdminNav } from "@/components/admin/AdminNav";
+import { AdminWorkbench } from "@/components/admin/AdminWorkbench";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -458,6 +466,11 @@ export default function Workspace({
   const [triggerOpen, setTriggerOpen] = useState(false);
   const [schemaInspectOpen, setSchemaInspectOpen] = useState(false);
   const [dumpOpen, setDumpOpen] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<"objects" | "admin">(
+    "objects",
+  );
+  const [adminView, setAdminView] =
+    useState<AdminViewId>(DEFAULT_ADMIN_VIEW);
   /** C13: plain-text session log shown in the history panel's Text mode. */
   const [textLog, setTextLog] = useState<string[]>([]);
   /** E6: queue cell edits and apply them in one transaction. */
@@ -3016,10 +3029,18 @@ export default function Workspace({
       },
       globalSearch: () => setSearchOpen(true),
       inspectTable: () => void inspectTable(),
-      dumpSchema: () => void dumpSchema(true),
+      dumpSchema: (includeData = true) => void dumpSchema(includeData),
       restoreSql: () => void importSqlFile(),
       schemaInspector: () => setSchemaInspectOpen(true),
       dumpTables: () => setDumpOpen(true),
+      openServerAdmin: () => {
+        if (!adminSupported(engine)) {
+          setStatus("Administration is available for MySQL, MariaDB, and PostgreSQL");
+          return;
+        }
+        setAdminView(DEFAULT_ADMIN_VIEW);
+        setWorkspaceMode("admin");
+      },
       openSqlInTab: (sql: string) => void newQueryTab(sql),
     };
   });
@@ -3044,10 +3065,11 @@ export default function Workspace({
       toggleHelp: () => actionsRef.current?.toggleHelp(),
       globalSearch: () => actionsRef.current?.globalSearch(),
       inspectTable: () => actionsRef.current?.inspectTable(),
-      dumpSchema: () => actionsRef.current?.dumpSchema(),
+      dumpSchema: (includeData) => actionsRef.current?.dumpSchema(includeData),
       restoreSql: () => actionsRef.current?.restoreSql(),
       schemaInspector: () => actionsRef.current?.schemaInspector(),
       dumpTables: () => actionsRef.current?.dumpTables(),
+      openServerAdmin: () => actionsRef.current?.openServerAdmin(),
       openSqlInTab: (sql) => actionsRef.current?.openSqlInTab?.(sql),
     };
     onActionsReadyRef.current?.(stable);
@@ -3146,19 +3168,49 @@ export default function Workspace({
           </div>
 
           <div className="border-b border-border px-3 py-2">
-            <div className="truncate text-sm font-semibold">
+            <button
+              type="button"
+              className={cn(
+                "block w-full truncate text-left text-sm font-semibold hover:text-primary",
+                workspaceMode === "admin" && "text-primary",
+              )}
+              title={
+                adminSupported(engine)
+                  ? workspaceMode === "admin"
+                    ? "Back to Objects (tables)"
+                    : "Open Administration (Workbench-style)"
+                  : connection.name
+              }
+              onClick={() => {
+                if (!adminSupported(engine)) return;
+                if (workspaceMode === "admin") {
+                  setWorkspaceMode("objects");
+                } else {
+                  setAdminView(DEFAULT_ADMIN_VIEW);
+                  setWorkspaceMode("admin");
+                }
+              }}
+            >
               {connection.name}
-            </div>
-            {isRestricted(connection.permissions) ? (
-              <div className="mt-1">
+            </button>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] text-muted-foreground">
+                {workspaceMode === "admin" ? "Administration" : "Objects"}
+                {adminSupported(engine) ? " · click name to switch" : ""}
+              </span>
+              {isRestricted(connection.permissions) ? (
                 <Badge variant="outline" className="gap-1 text-[10px]">
                   <Shield className="size-3" />
                   restricted
                 </Badge>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </div>
 
+          {workspaceMode === "admin" ? (
+            <AdminNav active={adminView} onSelect={setAdminView} />
+          ) : (
+            <>
           <div className="space-y-1.5 border-b border-border px-2 py-2">
             <div className="relative">
               <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -3171,25 +3223,31 @@ export default function Workspace({
               />
             </div>
             {engine !== "sqlite" ? (
-              <label className="block">
-                <span className="mb-0.5 block text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
-                  {isMysqlLike(engine) ? "Database" : "Schema"}
+              <label className="flex items-center gap-1.5">
+                <span className="shrink-0 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+                  {isMysqlLike(engine) ? "DB" : "Schema"}
                 </span>
-                <select
-                  className="h-6 w-full rounded-md border border-input bg-background px-2 font-mono text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
-                  value={selectedSchema}
-                  disabled={!schemaReady || schema.length === 0}
-                  onChange={(e) => void selectSchema(e.target.value)}
-                >
-                  <option value="">
-                    All {isMysqlLike(engine) ? "databases" : "schemas"}
-                  </option>
-                  {schema.map((s) => (
-                    <option key={s.name} value={s.name}>
-                      {s.name}
+                <span className="relative min-w-0 flex-1">
+                  <select
+                    className="h-7 w-full cursor-pointer appearance-none rounded-md border border-border bg-transparent py-0 pr-7 pl-2 font-mono text-[11px] leading-none text-foreground outline-none hover:bg-muted/40 focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/20"
+                    value={selectedSchema}
+                    disabled={!schemaReady || schema.length === 0}
+                    onChange={(e) => void selectSchema(e.target.value)}
+                    title={
+                      isMysqlLike(engine) ? "Current database" : "Current schema"
+                    }
+                  >
+                    <option value="">
+                      All {isMysqlLike(engine) ? "databases" : "schemas"}
                     </option>
-                  ))}
-                </select>
+                    {schema.map((s) => (
+                      <option key={s.name} value={s.name}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute top-1/2 right-1.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                </span>
               </label>
             ) : null}
           </div>
@@ -3524,10 +3582,24 @@ export default function Workspace({
               </div>
             </div>
           ) : null}
+            </>
+          )}
         </aside>
 
         {/* Main */}
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {workspaceMode === "admin" ? (
+            <AdminWorkbench
+              connection={connection}
+              view={adminView}
+              actions={{
+                dumpSchema: (includeData) => void dumpSchema(includeData),
+                dumpTables: () => setDumpOpen(true),
+                restoreSql: () => void importSqlFile(),
+              }}
+            />
+          ) : (
+            <>
           {/* Tab strip */}
           <div className="flex items-stretch border-b border-border bg-card">
             <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
@@ -4666,6 +4738,8 @@ export default function Workspace({
             textLog={textLog}
             onClearText={() => setTextLog([])}
           />
+            </>
+          )}
         </main>
       </div>
 

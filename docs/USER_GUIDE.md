@@ -47,7 +47,7 @@ Top of the window:
 | **Edit** | Format SQL (`Ctrl+Shift+F`), Undo / Redo (editor), Cut / Copy / Paste (act on the last focused editor or text field). |
 | **Query** | Run Script (`Ctrl+Shift+Enter`), Stop, Begin / Commit / Rollback. |
 | **View** | Toggle History, Snippets, Context Help; Search Data… (`Ctrl+Shift+H`); Inspect Table…; Schema Inspector…; Preferences…; **Keyboard shortcuts…**; Toggle theme. |
-| **Tools** | Server Admin, EER Diagram, Schema Compare, Migration Wizard (enabled while a connection is in front). See [Tools](#tools). |
+| **Tools** | Server Admin (Workbench Administration), EER Diagram, Schema Compare, Migration Wizard. See [Tools](#tools) and [Administration](#administration). |
 
 `Ctrl+T/W/O/S/Shift+S/Shift+F` also work from the keyboard (⌘ on macOS). **View → Keyboard shortcuts…** lists them all (including `Ctrl+Enter`, `Ctrl+Shift+Enter`, `Ctrl+Shift+Q`, `Ctrl+,`).
 
@@ -281,11 +281,24 @@ Large files: imports over ~50MB are rejected. Exports cap at a large row limit o
 
 ---
 
+## Administration
+
+Click the **connection name** in the left sidebar (MySQL / MariaDB / PostgreSQL) to toggle **Objects** ↔ **Administration**. Tools → **Server Admin** opens the same mode.
+
+Left nav mirrors MySQL Workbench:
+
+- **Management:** Server Status (dashboard), Client Connections (+ Kill), Users and Privileges (Grants / New / Drop), Status and System Variables, Data Export, Data Import/Restore
+- **Instance:** Startup / Shutdown (info stub — OS service control is out of reach over SQL), Server Logs, Options File (info stub)
+- **Performance:** Dashboard, Performance Reports, Performance Schema Setup (read-only)
+
+Kill, Drop and New user need the DDL permission; the account this connection uses cannot be dropped from here.
+
 ## Tools
 
 Open from the **Tools** menu; they act on the connection tab in front.
 
-- **Server Admin** (MySQL, MariaDB, PostgreSQL): *Processes* (with **Kill**), *Status*, *Variables*, *Users* (**Grants**, **Drop** with confirmation, **New user**), *Performance* (version + uptime, largest tables; MySQL I/O waits and top statements from `performance_schema`; PostgreSQL `pg_stat_user_tables` and top statements from `pg_stat_statements` when that extension is installed — otherwise the report shows a tip instead), *Logs* (log variables / settings and, on MySQL 8.0.22+, recent `error_log`; otherwise a "not available" message). Every table has a search box. Kill, Drop and New user need the DDL permission; the account the connection itself uses cannot be dropped from here.
+- **Server Admin** — opens in-workspace Administration (above).
+- Other tools:
 - **EER Diagram**: reverse engineers tables and foreign keys into a read-only diagram. **Forward engineer → query tab** generates CREATE TABLE / FK / index SQL from the diagram; **Copy SQL** copies it. **Validate** lists tables without a primary key and foreign keys to missing tables; **Export SVG** saves the diagram.
 - **Schema Compare**: compares the current schema (A) with another schema, another saved connection, or a `.sql` file (B) and lists missing tables/columns, type differences and (when B is a schema or connection) index-name and foreign-key-name differences.
 - **Migration Wizard**: choose source and target saved connections, list and tick tables, then create tables and/or copy data in batches. Same-engine pairs copy the source DDL. For different engines, tables are created from mapped column types (editable **Type mapping** rules; only NOT NULL and primary keys carry over). A progress line shows `table i/n, rows copied`. Sessions the wizard opens are closed afterwards.

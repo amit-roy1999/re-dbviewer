@@ -79,16 +79,19 @@ Source: MySQL Workbench Manual chs 3–10 vs re-dbviewer on `feature/workbench-p
 
 ## F. Admin (engine-gated)
 
+Workbench-style **Administration** mode: click the connection name in the Workspace sidebar (or Tools → Server Admin). Left nav groups **Management / Instance / Performance**.
+
 | ID | Feature | Status |
 |----|---------|--------|
-| F1 | Server status | done |
-| F2 | Variables browser | done |
-| F3 | Process list + kill | done |
-| F4 | Users & grants — Grants, Drop user, New user (no revoke) | done |
-| F5 | Server logs — Admin → Logs: log variables, MySQL `performance_schema.error_log` when present, PG log settings | done |
-| F6 | Options file editor | oos |
-| F7 | Service control | oos |
+| F1 | Server status — dashboard (host/version/uptime, metric cards, features, directories) | done |
+| F2 | Variables browser — Status and System Variables (status + variables side by side) | done |
+| F3 | Process list + kill — Client Connections | done |
+| F4 | Users & grants — Users and Privileges (Grants, Drop, New user; no revoke) | done |
+| F5 | Server logs — log variables + MySQL `error_log` / PG log settings | done |
+| F6 | Options file editor — stub (no server FS access over SQL) | oos |
+| F7 | Service control — Startup/Shutdown stub (cannot control OS service over SQL) | oos |
 | F8–F10 | Enterprise Audit/Backup/Firewall | oos |
+| F11 | Data Export / Import from Admin nav (dump + restore SQL) | done |
 
 ## G. Performance
 
@@ -96,9 +99,10 @@ Source: MySQL Workbench Manual chs 3–10 vs re-dbviewer on `feature/workbench-p
 |----|---------|--------|
 | G1 | Visual Explain diagram (Workbench-style SVG) | done |
 | G2 | EXPLAIN ANALYZE compare — Compare plans: step counts + first cost value vs previous Explain | done |
-| G3 | Perf reports lite — adds top statements (MySQL `performance_schema` / PG `pg_stat_statements`, best-effort) | done |
+| G3 | Perf reports — Admin → Performance Reports (tables, I/O waits, top statements) | done |
 | G4 | Timing histogram — bar histogram of history durations in the History header | done |
-| G5 | Perf dashboard — alias of G3: Performance tab now also shows version + uptime | done |
+| G5 | Perf dashboard — Admin → Performance → Dashboard (live status cards) | done |
+| G6 | Performance Schema Setup — read-only consumers/instruments checklist | done |
 
 ## H. Modeling
 

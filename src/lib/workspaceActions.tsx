@@ -19,10 +19,12 @@ export type WorkspaceActions = {
   toggleHelp: () => void;
   globalSearch: () => void;
   inspectTable: () => void;
-  dumpSchema: () => void;
+  dumpSchema: (includeData?: boolean) => void;
   restoreSql: () => void;
   schemaInspector: () => void;
   dumpTables: () => void;
+  /** Open Workbench-style Administration mode (Server Status). */
+  openServerAdmin: () => void;
   /** Open SQL text in a new query tab (used by EER forward-engineer). */
   openSqlInTab?: (sql: string) => void;
 };

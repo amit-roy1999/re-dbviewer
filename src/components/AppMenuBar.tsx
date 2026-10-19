@@ -331,9 +331,14 @@ export function AppMenuBar({
       <DropdownMenu>
         <DropdownMenuTrigger className={cn(menuBtn)}>Tools</DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-48">
+          <DropdownMenuItem
+            disabled={!ws}
+            onSelect={() => actions?.openServerAdmin()}
+          >
+            Server Admin (Workbench Administration)…
+          </DropdownMenuItem>
           {(
             [
-              ["admin", "Server Admin (processes, status, users)…"],
               ["eer", "EER Diagram / Forward Engineer…"],
               ["compare", "Schema Compare…"],
               ["migrate", "Migration Wizard…"],

@@ -73,8 +73,7 @@ pub struct TableSort {
 pub enum PlaceholderStyle {
     Question, // ?, ?
     Dollar,   // $1, $2
-    At,       // @P1, @P2
-    Inline,   // 'escaped' literals (mssql ponytail)
+    Inline,   // 'escaped' literals (mssql)
 }
 
 pub fn quote_ident(name: &str) -> Result<String, String> {
@@ -186,7 +185,6 @@ fn next_placeholder(style: PlaceholderStyle, n: usize) -> String {
     match style {
         PlaceholderStyle::Question => "?".into(),
         PlaceholderStyle::Dollar => format!("${n}"),
-        PlaceholderStyle::At => format!("@P{n}"),
         PlaceholderStyle::Inline => unreachable!(),
     }
 }
