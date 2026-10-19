@@ -11,13 +11,35 @@ pub struct ConnectionConfig {
     pub port: Option<u16>,
     #[serde(default)]
     pub user: Option<String>,
-    /// ponytail: plaintext local store; OS keyring if shared machine
+    /// Cleared before persisting when the OS keyring accepts it.
     #[serde(default)]
     pub password: Option<String>,
     #[serde(default)]
     pub database: Option<String>,
     #[serde(default)]
     pub ssl_mode: Option<String>,
+    /// PEM paths. Postgres uses all three; MySQL uses CA only (mysql_async wants PKCS#12 for client certs).
+    #[serde(default)]
+    pub ssl_cert: Option<String>,
+    #[serde(default)]
+    pub ssl_key: Option<String>,
+    #[serde(default)]
+    pub ssl_ca: Option<String>,
+    /// Unix socket path (MySQL socket file, or Postgres socket directory).
+    #[serde(default)]
+    pub socket_path: Option<String>,
+    /// SSH tunnel via system `ssh -L` (key auth only).
+    #[serde(default)]
+    pub ssh_host: Option<String>,
+    #[serde(default)]
+    pub ssh_port: Option<u16>,
+    #[serde(default)]
+    pub ssh_user: Option<String>,
+    #[serde(default)]
+    pub ssh_key_path: Option<String>,
+    /// True when the password lives in the OS keyring (never persisted in config_json).
+    #[serde(default)]
+    pub password_in_keyring: bool,
 }
 
 impl ConnectionConfig {
@@ -26,6 +48,33 @@ impl ConnectionConfig {
             path: Some(path.into()),
             ..Default::default()
         }
+    }
+
+    pub fn ssl_enabled(&self) -> bool {
+        !matches!(
+            self.ssl_mode.as_deref().map(str::to_ascii_lowercase).as_deref(),
+            None | Some("") | Some("disable") | Some("false")
+        )
+    }
+
+    fn nonempty(v: &Option<String>) -> Option<&str> {
+        v.as_deref().map(str::trim).filter(|s| !s.is_empty())
+    }
+
+    pub fn ssl_ca_path(&self) -> Option<&str> {
+        Self::nonempty(&self.ssl_ca)
+    }
+    pub fn ssl_cert_path(&self) -> Option<&str> {
+        Self::nonempty(&self.ssl_cert)
+    }
+    pub fn ssl_key_path(&self) -> Option<&str> {
+        Self::nonempty(&self.ssl_key)
+    }
+    pub fn socket(&self) -> Option<&str> {
+        Self::nonempty(&self.socket_path)
+    }
+    pub fn ssh_host_opt(&self) -> Option<&str> {
+        Self::nonempty(&self.ssh_host)
     }
 
     pub fn path_or_err(&self) -> Result<&str, String> {

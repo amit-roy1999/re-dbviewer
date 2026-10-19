@@ -137,16 +137,21 @@
   --sidebar-ring: #2dd4bf;
 }
 
-/* CodeMirror densetool theme */
+/* CodeMirror densetool theme — font size from Preferences (--editor-font-size). */
 .cm-editor {
   height: 100%;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--editor-font-size, 13px);
   background: var(--card);
   color: var(--foreground);
 }
 .cm-editor.cm-focused {
   outline: none;
+}
+.cm-scroller,
+.cm-content,
+.cm-gutters {
+  font-size: var(--editor-font-size, 13px) !important;
 }
 .cm-scroller {
   font-family: var(--font-mono) !important;
@@ -163,4 +168,59 @@
   background: var(--sidebar);
   border-color: var(--border);
   color: var(--muted-foreground);
+}
+
+/* High-contrast preference (View → Preferences). */
+html.high-contrast {
+  --background: #ffffff;
+  --foreground: #000000;
+  --card: #ffffff;
+  --card-foreground: #000000;
+  --popover: #ffffff;
+  --popover-foreground: #000000;
+  --primary: #004d47;
+  --primary-foreground: #ffffff;
+  --secondary: #e6e6e6;
+  --secondary-foreground: #000000;
+  --muted: #ececec;
+  --muted-foreground: #1a1a1a;
+  --accent: #d6efec;
+  --accent-foreground: #002f2b;
+  --destructive: #8b0000;
+  --border: #000000;
+  --input: #000000;
+  --ring: #0000ee;
+  --sidebar: #ffffff;
+  --sidebar-border: #000000;
+}
+html.high-contrast.dark {
+  --background: #000000;
+  --foreground: #ffffff;
+  --card: #000000;
+  --card-foreground: #ffffff;
+  --popover: #000000;
+  --popover-foreground: #ffffff;
+  --primary: #5ffbf1;
+  --primary-foreground: #000000;
+  --secondary: #1a1a1a;
+  --secondary-foreground: #ffffff;
+  --muted: #1a1a1a;
+  --muted-foreground: #f0f0f0;
+  --accent: #003a36;
+  --accent-foreground: #ffffff;
+  --destructive: #ff8080;
+  --border: #ffffff;
+  --input: #ffffff;
+  --ring: #ffff00;
+  --sidebar: #000000;
+  --sidebar-border: #ffffff;
+}
+html.high-contrast *:focus-visible {
+  outline: 2px solid var(--ring) !important;
+  outline-offset: 1px;
+}
+html.high-contrast .cm-editor,
+html.high-contrast .cm-gutters {
+  background: var(--card) !important;
+  color: var(--foreground) !important;
 }

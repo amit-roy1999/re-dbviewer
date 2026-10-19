@@ -2,12 +2,15 @@ mod app_store;
 mod config;
 mod engines;
 mod permissions;
+pub mod secrets;
 mod session;
 mod transfer;
+mod tunnel;
 mod types;
 
 pub use app_store::{AppStore, Category, SavedConnection};
 pub use config::ConnectionConfig;
+pub use secrets as keyring_store;
 pub use permissions::Permissions;
 pub use session::{test_engine, SessionState};
 pub use types::{

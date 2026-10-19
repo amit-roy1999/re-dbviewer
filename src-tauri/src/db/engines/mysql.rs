@@ -8,12 +8,30 @@ use super::super::types::{
 };
 
 fn opts(config: &ConnectionConfig) -> mysql_async::OptsBuilder {
-    mysql_async::OptsBuilder::default()
+    let mut b = mysql_async::OptsBuilder::default()
         .ip_or_hostname(config.host_or("127.0.0.1"))
         .tcp_port(config.port.unwrap_or(3306))
         .user(Some(config.user_or("root")))
         .pass(Some(config.password_or()))
-        .db_name(Some(config.database_or("mysql")))
+        .db_name(Some(config.database_or("mysql")));
+    if let Some(sock) = config.socket() {
+        b = b.socket(Some(sock));
+    } else if config.ssl_enabled() {
+        let mode = config.ssl_mode.as_deref().unwrap_or("").to_ascii_lowercase();
+        let verify = mode.starts_with("verify");
+        let mut ssl = mysql_async::SslOpts::default();
+        if let Some(ca) = config.ssl_ca_path() {
+            ssl = ssl.with_root_certs(vec![std::path::PathBuf::from(ca).into()]);
+        }
+        if !verify {
+            ssl = ssl.with_danger_accept_invalid_certs(true);
+        }
+        if mode == "verify-ca" {
+            ssl = ssl.with_danger_skip_domain_validation(true);
+        }
+        b = b.ssl_opts(Some(ssl));
+    }
+    b
 }
 
 pub async fn test(config: &ConnectionConfig) -> Result<String, String> {

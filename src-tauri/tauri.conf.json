@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "re-dbviewer",
         "width": 1100,
         "height": 720

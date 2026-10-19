@@ -8,6 +8,16 @@ export type ConnectionConfig = {
   password?: string | null;
   database?: string | null;
   sslMode?: string | null;
+  sslCert?: string | null;
+  sslKey?: string | null;
+  sslCa?: string | null;
+  socketPath?: string | null;
+  sshHost?: string | null;
+  sshPort?: number | null;
+  sshUser?: string | null;
+  sshKeyPath?: string | null;
+  /** Set by the backend when the password lives in the OS keyring. */
+  passwordInKeyring?: boolean;
 };
 
 export type Permissions = {
@@ -123,6 +133,7 @@ export function connectionSummary(c: SavedConnection): string {
   if (c.engine === "sqlite") {
     return c.config.path ?? "";
   }
+  if (c.config.socketPath) return `socket ${c.config.socketPath}`;
   const host = c.config.host ?? "localhost";
   const port = c.config.port ?? "";
   const db = c.config.database ?? "";

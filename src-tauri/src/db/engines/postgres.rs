@@ -7,7 +7,7 @@ use super::super::types::{
 };
 
 fn conn_str(config: &ConnectionConfig) -> String {
-    let host = config.host_or("127.0.0.1");
+    let host = config.socket().unwrap_or_else(|| config.host_or("127.0.0.1"));
     let port = config.port.unwrap_or(5432);
     let user = config.user_or("postgres");
     let password = config.password_or();
@@ -15,13 +15,53 @@ fn conn_str(config: &ConnectionConfig) -> String {
     format!("host={host} port={port} user={user} password={password} dbname={db}")
 }
 
+fn tls_connector(config: &ConnectionConfig) -> Result<postgres_native_tls::MakeTlsConnector, String> {
+    let mode = config.ssl_mode.as_deref().unwrap_or("").to_ascii_lowercase();
+    let verify = mode.starts_with("verify");
+    let mut b = native_tls::TlsConnector::builder();
+    if let Some(ca) = config.ssl_ca_path() {
+        let pem = std::fs::read(ca).map_err(|e| format!("ssl CA {ca}: {e}"))?;
+        b.add_root_certificate(native_tls::Certificate::from_pem(&pem).map_err(|e| e.to_string())?);
+    }
+    if let (Some(cert), Some(key)) = (config.ssl_cert_path(), config.ssl_key_path()) {
+        let c = std::fs::read(cert).map_err(|e| format!("ssl cert {cert}: {e}"))?;
+        let k = std::fs::read(key).map_err(|e| format!("ssl key {key}: {e}"))?;
+        b.identity(native_tls::Identity::from_pkcs8(&c, &k).map_err(|e| e.to_string())?);
+    }
+    if !verify {
+        b.danger_accept_invalid_certs(true);
+        b.danger_accept_invalid_hostnames(true);
+    } else if mode == "verify-ca" {
+        b.danger_accept_invalid_hostnames(true);
+    }
+    Ok(postgres_native_tls::MakeTlsConnector::new(
+        b.build().map_err(|e| e.to_string())?,
+    ))
+}
+
+async fn connect(config: &ConnectionConfig) -> Result<tokio_postgres::Client, String> {
+    let s = conn_str(config);
+    if config.ssl_enabled() && config.socket().is_none() {
+        let (client, connection) = tokio_postgres::connect(&format!("{s} sslmode=require"), tls_connector(config)?)
+            .await
+            .map_err(|e| e.to_string())?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        Ok(client)
+    } else {
+        let (client, connection) = tokio_postgres::connect(&s, NoTls)
+            .await
+            .map_err(|e| e.to_string())?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        Ok(client)
+    }
+}
+
 pub async fn test(config: &ConnectionConfig) -> Result<String, String> {
-    let (client, connection) = tokio_postgres::connect(&conn_str(config), NoTls)
-        .await
-        .map_err(|e| e.to_string())?;
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+    let client = connect(config).await?;
     let row = client
         .query_one("SELECT version()", &[])
         .await
@@ -31,13 +71,7 @@ pub async fn test(config: &ConnectionConfig) -> Result<String, String> {
 }
 
 pub async fn open(config: &ConnectionConfig) -> Result<tokio_postgres::Client, String> {
-    let (client, connection) = tokio_postgres::connect(&conn_str(config), NoTls)
-        .await
-        .map_err(|e| e.to_string())?;
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    Ok(client)
+    connect(config).await
 }
 
 pub async fn list_schema(client: &tokio_postgres::Client) -> Result<Vec<SchemaNode>, String> {
@@ -338,6 +372,13 @@ fn pg_value(row: &Row, i: usize) -> serde_json::Value {
         return match v {
             None => serde_json::Value::Null,
             Some(s) => serde_json::Value::String(s),
+        };
+    }
+    // json / jsonb (e.g. EXPLAIN FORMAT JSON) — not readable as String
+    if let Ok(v) = row.try_get::<_, Option<serde_json::Value>>(i) {
+        return match v {
+            None => serde_json::Value::Null,
+            Some(j) => j,
         };
     }
     if let Ok(v) = row.try_get::<_, Option<Vec<u8>>>(i) {

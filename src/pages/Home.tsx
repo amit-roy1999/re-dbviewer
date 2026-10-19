@@ -192,6 +192,15 @@ export default function Home({ onOpen }: Props) {
             user: draft.config.user ?? "",
             password: draft.config.password ?? "",
             database: draft.config.database ?? "",
+            sslMode: draft.config.sslMode,
+            sslCert: draft.config.sslCert,
+            sslKey: draft.config.sslKey,
+            sslCa: draft.config.sslCa,
+            socketPath: draft.config.socketPath,
+            sshHost: draft.config.sshHost,
+            sshPort: draft.config.sshPort,
+            sshUser: draft.config.sshUser,
+            sshKeyPath: draft.config.sshKeyPath,
           },
         }),
       );
@@ -279,6 +288,33 @@ export default function Home({ onOpen }: Props) {
       setError(String(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function duplicate(c: SavedConnection) {
+    setBusy(true);
+    setError("");
+    try {
+      const copy = await invoke<SavedConnection>("duplicate_connection", {
+        id: c.id,
+      });
+      setStatus(`Duplicated as "${copy.name}".`);
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyUrl(c: SavedConnection) {
+    try {
+      await invoke("write_clipboard", {
+        text: buildConnectionUrl(c.engine as Engine, c.config),
+      });
+      setStatus("Connection URL copied.");
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -386,6 +422,12 @@ export default function Home({ onOpen }: Props) {
                 <DropdownMenuItem onClick={() => setDraft(fromSaved(c))}>
                   Edit
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void duplicate(c)}>
+                  Duplicate
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void copyUrl(c)}>
+                  Copy URL
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   variant="destructive"
                   onClick={() => remove(c.id)}
@@ -397,6 +439,122 @@ export default function Home({ onOpen }: Props) {
           </div>
         </CardHeader>
       </Card>
+    );
+  }
+
+  function cfgField(
+    label: string,
+    key: keyof ConnectionConfig,
+    placeholder = "",
+    type: "text" | "number" = "text",
+  ) {
+    if (!draft) return null;
+    const v = draft.config[key];
+    return (
+      <div className="grid gap-1.5">
+        <Label>{label}</Label>
+        <Input
+          type={type}
+          className="font-mono text-xs"
+          placeholder={placeholder}
+          value={typeof v === "string" || typeof v === "number" ? v : ""}
+          onChange={(e) =>
+            setDraft(
+              syncUrl({
+                ...draft,
+                config: {
+                  ...draft.config,
+                  [key]:
+                    type === "number"
+                      ? e.target.value
+                        ? Number(e.target.value)
+                        : null
+                      : e.target.value,
+                },
+              }),
+            )
+          }
+        />
+      </div>
+    );
+  }
+
+  function networkFields() {
+    if (!draft) return null;
+    const mysqlLike = draft.engine === "mysql" || draft.engine === "mariadb";
+    const hasSsh = !!draft.config.sshHost?.trim();
+    return (
+      <details
+        className="rounded-md border border-border p-2.5"
+        open={
+          !!(
+            draft.config.sslMode ||
+            draft.config.sslCa ||
+            draft.config.socketPath ||
+            hasSsh
+          )
+        }
+      >
+        <summary className="cursor-pointer text-sm font-medium">
+          SSL, socket &amp; SSH tunnel
+        </summary>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-1.5 sm:col-span-2">
+            <Label>SSL mode</Label>
+            <select
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm text-foreground outline-none dark:bg-input/30 dark:[color-scheme:dark]"
+              value={draft.config.sslMode ?? ""}
+              onChange={(e) =>
+                setDraft(
+                  syncUrl({
+                    ...draft,
+                    config: { ...draft.config, sslMode: e.target.value || null },
+                  }),
+                )
+              }
+            >
+              <option value="">Off</option>
+              <option value="require">require (no verify)</option>
+              <option value="verify-ca">verify-ca</option>
+              <option value="verify-full">verify-full</option>
+            </select>
+          </div>
+          {cfgField("SSL CA file (PEM)", "sslCa", "/path/ca.pem")}
+          {cfgField(
+            "SSL client cert (PEM)",
+            "sslCert",
+            mysqlLike ? "saved; not used by MySQL driver" : "/path/client.pem",
+          )}
+          {cfgField(
+            "SSL client key (PEM)",
+            "sslKey",
+            mysqlLike ? "saved; not used by MySQL driver" : "/path/client.key",
+          )}
+          {draft.engine === "postgres" || mysqlLike ? (
+            <div className="sm:col-span-2">
+              {cfgField(
+                mysqlLike ? "Unix socket file" : "Unix socket directory",
+                "socketPath",
+                mysqlLike ? "/var/run/mysqld/mysqld.sock" : "/var/run/postgresql",
+              )}
+            </div>
+          ) : null}
+          <div className="sm:col-span-2">
+            {cfgField("SSH host", "sshHost", "bastion.example.com")}
+          </div>
+          {cfgField("SSH user", "sshUser")}
+          {cfgField("SSH port", "sshPort", "22", "number")}
+          <div className="sm:col-span-2">
+            {cfgField("SSH private key file", "sshKeyPath", "~/.ssh/id_ed25519")}
+          </div>
+          <p className="text-[11px] text-muted-foreground sm:col-span-2">
+            {hasSsh
+              ? "SSH tunnel uses the system `ssh` binary with key auth (no password prompt); the database host/port above is resolved from the SSH server."
+              : "Optional. Leave SSH host empty for a direct connection."}{" "}
+            Passwords are stored in the OS keyring when available.
+          </p>
+        </div>
+      </details>
     );
   }
 
@@ -705,6 +863,8 @@ export default function Home({ onOpen }: Props) {
                   </div>
                 </div>
               )}
+
+              {draft.engine !== "sqlite" ? networkFields() : null}
 
               <div className="grid gap-1.5">
                 <Label htmlFor="conn-category">Category</Label>

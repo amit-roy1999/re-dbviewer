@@ -1,9 +1,11 @@
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use super::app_store::SavedConnection;
 use super::config::ConnectionConfig;
 use super::engines::{mssql, mysql, postgres, sqlite};
 use super::permissions::assert_sql_allowed;
+use super::tunnel::{maybe_tunnel, Tunnel};
 use super::transfer::{
     parse_csv, rows_to_csv, rows_to_inserts, split_sql_statements, synthesize_create,
     EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_BYTES_CAP,
@@ -21,46 +23,120 @@ enum LiveDb {
 
 struct OpenSession {
     connection: SavedConnection,
+    // field order matters: db drops before the tunnel it rides on
     db: LiveDb,
+    _tunnel: Option<Tunnel>,
 }
 
+/// Several open connections keyed by saved-connection id; one is "active" and is what
+/// commands without an explicit `connection_id` operate on.
 pub struct SessionState {
-    inner: Mutex<Option<OpenSession>>,
+    sessions: Mutex<HashMap<String, Arc<Mutex<OpenSession>>>>,
+    active: Mutex<Option<String>>,
 }
 
 impl SessionState {
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(None),
+            sessions: Mutex::new(HashMap::new()),
+            active: Mutex::new(None),
         }
     }
 
+    /// Opens (or re-opens) a connection and makes it active.
     pub fn open(&self, connection: SavedConnection) -> Result<(), String> {
-        let db = open_engine(&connection.engine, &connection.config)?;
-        let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
-        *guard = Some(OpenSession { connection, db });
+        let (cfg, tunnel) = maybe_tunnel(&connection.engine, &connection.config)?;
+        let db = open_engine(&connection.engine, &cfg)?;
+        let id = connection.id.clone();
+        let sess = Arc::new(Mutex::new(OpenSession {
+            connection,
+            db,
+            _tunnel: tunnel,
+        }));
+        self.sessions
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(id.clone(), sess);
+        *self.active.lock().map_err(|e| e.to_string())? = Some(id);
         Ok(())
     }
 
-    pub fn close(&self) -> Result<(), String> {
-        let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
-        *guard = None;
+    /// Closes the given connection, or the active one when `id` is None.
+    pub fn close_id(&self, id: Option<&str>) -> Result<(), String> {
+        let target = match id {
+            Some(i) => Some(i.to_string()),
+            None => self.active.lock().map_err(|e| e.to_string())?.clone(),
+        };
+        let Some(target) = target else { return Ok(()) };
+        let mut map = self.sessions.lock().map_err(|e| e.to_string())?;
+        map.remove(&target);
+        let mut active = self.active.lock().map_err(|e| e.to_string())?;
+        if active.as_deref() == Some(target.as_str()) {
+            *active = map.keys().next().cloned();
+        }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn close(&self) -> Result<(), String> {
+        self.close_id(None)
+    }
+
+    pub fn set_active(&self, id: &str) -> Result<(), String> {
+        if !self
+            .sessions
+            .lock()
+            .map_err(|e| e.to_string())?
+            .contains_key(id)
+        {
+            return Err(format!("connection {id} is not open"));
+        }
+        *self.active.lock().map_err(|e| e.to_string())? = Some(id.to_string());
+        Ok(())
+    }
+
+    pub fn open_ids(&self) -> Vec<String> {
+        self.sessions
+            .lock()
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn with_target<T>(
+        &self,
+        id: Option<&str>,
+        f: impl FnOnce(&SavedConnection, &mut LiveDb) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let key = match id {
+            Some(i) => i.to_string(),
+            None => self
+                .active
+                .lock()
+                .map_err(|e| e.to_string())?
+                .clone()
+                .ok_or_else(|| "no connection open".to_string())?,
+        };
+        let arc = self
+            .sessions
+            .lock()
+            .map_err(|e| e.to_string())?
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| format!("connection {key} is not open"))?;
+        let mut session = arc.lock().map_err(|e| e.to_string())?;
+        let OpenSession { connection, db, .. } = &mut *session;
+        f(connection, db)
     }
 
     fn with_mut<T>(
         &self,
         f: impl FnOnce(&SavedConnection, &mut LiveDb) -> Result<T, String>,
     ) -> Result<T, String> {
-        let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
-        let session = guard
-            .as_mut()
-            .ok_or_else(|| "no connection open".to_string())?;
-        f(&session.connection, &mut session.db)
+        self.with_target(None, f)
     }
 
-    pub fn list_schema(&self) -> Result<Vec<SchemaNode>, String> {
-        self.with_mut(|_, db| match db {
+    pub fn list_schema_on(&self, id: Option<&str>) -> Result<Vec<SchemaNode>, String> {
+        self.with_target(id, |_, db| match db {
             LiveDb::Sqlite(c) => sqlite::list_schema(c),
             LiveDb::Postgres(c) => block_on(postgres::list_schema(c)),
             LiveDb::Mysql(c) => block_on(mysql::list_schema(c)),
@@ -68,8 +144,8 @@ impl SessionState {
         })
     }
 
-    pub fn describe_table(&self, table: &str) -> Result<TableDetails, String> {
-        self.with_mut(|conn, db| {
+    pub fn describe_table_on(&self, id: Option<&str>, table: &str) -> Result<TableDetails, String> {
+        self.with_target(id, |conn, db| {
             assert_sql_allowed(&conn.permissions, "SELECT 1")?;
             describe_table_inner(db, table)
         })
@@ -89,12 +165,12 @@ impl SessionState {
         })
     }
 
-    pub fn run_sql(&self, sql: &str) -> Result<QueryResult, String> {
+    pub fn run_sql_on(&self, id: Option<&str>, sql: &str) -> Result<QueryResult, String> {
         let trimmed = sql.trim();
         if trimmed.is_empty() {
             return Err("empty SQL".into());
         }
-        self.with_mut(|conn, db| {
+        self.with_target(id, |conn, db| {
             assert_sql_allowed(&conn.permissions, trimmed)?;
             run_sql_inner(db, trimmed)
         })
@@ -110,16 +186,31 @@ impl SessionState {
         Ok(rows_to_csv(&result))
     }
 
+    #[cfg(test)]
     pub fn export_table_sql(
         &self,
         table: &str,
         include_schema: bool,
         include_data: bool,
+        filters: &[TableFilter],
+        sort: Option<&TableSort>,
+    ) -> Result<String, String> {
+        self.export_table_sql_on(None, table, include_schema, include_data, filters, sort)
+    }
+
+    pub fn export_table_sql_on(
+        &self,
+        id: Option<&str>,
+        table: &str,
+        include_schema: bool,
+        include_data: bool,
+        filters: &[TableFilter],
+        sort: Option<&TableSort>,
     ) -> Result<String, String> {
         if !include_schema && !include_data {
             return Err("include_schema or include_data required".into());
         }
-        self.with_mut(|conn, db| {
+        self.with_target(id, |conn, db| {
             assert_sql_allowed(&conn.permissions, "SELECT 1")?;
             let mysql_style = matches!(db, LiveDb::Mysql(_));
             let mut out = String::new();
@@ -136,8 +227,7 @@ impl SessionState {
                 out.push_str(";\n\n");
             }
             if include_data {
-                // release borrow by fetching outside match — need preview while holding db
-                let data = fetch_all_inner(db, table, &[], None)?;
+                let data = fetch_all_inner(db, table, filters, sort)?;
                 out.push_str(&rows_to_inserts(table, &data, mysql_style)?);
             }
             Ok(out)
@@ -220,7 +310,7 @@ impl SessionState {
         })
     }
 
-    pub fn run_sql_script(&self, sql: &str) -> Result<u64, String> {
+    pub fn run_sql_script_on(&self, id: Option<&str>, sql: &str) -> Result<u64, String> {
         if sql.len() > IMPORT_BYTES_CAP {
             return Err("SQL script exceeds 50MB limit".into());
         }
@@ -230,7 +320,7 @@ impl SessionState {
         }
         let mut ran = 0u64;
         for stmt in stmts {
-            self.run_sql(&stmt)?;
+            self.run_sql_on(id, &stmt)?;
             ran += 1;
         }
         Ok(ran)
@@ -328,6 +418,8 @@ fn open_engine(engine: &str, config: &ConnectionConfig) -> Result<LiveDb, String
 }
 
 pub fn test_engine(engine: &str, config: &ConnectionConfig) -> Result<String, String> {
+    let (config, _tunnel) = maybe_tunnel(engine, config)?;
+    let config = &config;
     match engine {
         "sqlite" => sqlite::test(config),
         "postgres" => block_on(postgres::test(config)),
@@ -389,7 +481,7 @@ mod tests {
         assert!(csv.contains("email"));
         assert!(csv.contains("ada@example.com"));
 
-        let ddl = session.export_table_sql("users", true, true).unwrap();
+        let ddl = session.export_table_sql("users", true, true, &[], None).unwrap();
         assert!(ddl.to_uppercase().contains("CREATE TABLE"));
         assert!(ddl.contains("INSERT INTO"));
 
@@ -424,6 +516,38 @@ mod tests {
     }
 
     #[test]
+    fn multi_session_active_and_scoped() {
+        let dir = std::env::temp_dir().join(format!("re-dbviewer-multi-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mk = |name: &str, table: &str| {
+            let path = dir.join(name);
+            let c = rusqlite::Connection::open(&path).unwrap();
+            c.execute_batch(&format!("CREATE TABLE {table} (id INTEGER);")).unwrap();
+            let mut sc = fake_conn("sqlite", ConnectionConfig::sqlite_path(path.to_string_lossy()), Permissions::default());
+            sc.id = name.into();
+            sc
+        };
+        let session = SessionState::new();
+        session.open(mk("a.sqlite", "ta")).unwrap();
+        session.open(mk("b.sqlite", "tb")).unwrap();
+        assert_eq!(session.open_ids().len(), 2);
+        // b opened last => active
+        let names = |id: Option<&str>| -> Vec<String> {
+            session.list_schema_on(id).unwrap().iter().flat_map(|s| s.children.iter().map(|c| c.name.clone()).chain(std::iter::once(s.name.clone()))).collect()
+        };
+        assert!(names(None).iter().any(|n| n == "tb"));
+        assert!(names(Some("a.sqlite")).iter().any(|n| n == "ta"));
+        session.set_active("a.sqlite").unwrap();
+        assert!(names(None).iter().any(|n| n == "ta"));
+        session.close_id(Some("a.sqlite")).unwrap();
+        // active falls back to remaining
+        assert!(names(None).iter().any(|n| n == "tb"));
+        assert!(session.set_active("a.sqlite").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn mysql_export_import_smoke() {
         let session = SessionState::new();
         let opened = session.open(fake_conn(
@@ -446,7 +570,7 @@ mod tests {
         let csv = session.export_table_csv("users", &[], None).unwrap();
         assert!(csv.contains("email"));
 
-        let sql = session.export_table_sql("users", true, true).unwrap();
+        let sql = session.export_table_sql("users", true, true, &[], None).unwrap();
         assert!(sql.to_uppercase().contains("CREATE TABLE"));
         assert!(sql.contains("INSERT INTO"));
 
@@ -461,7 +585,7 @@ mod tests {
         assert_eq!(n, 1);
 
         session
-            .run_sql_script("DELETE FROM users WHERE email = 'io_smoke@example.com'")
+            .run_sql_script_on(None, "DELETE FROM users WHERE email = 'io_smoke@example.com'")
             .unwrap();
 
         session

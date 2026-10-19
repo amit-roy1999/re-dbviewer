@@ -1,0 +1,14 @@
+---
+description: Keep user documentation in sync when shipping features
+globs:
+  - src/**/*
+  - src-tauri/src/**/*
+  - docs/**/*
+---
+
+When you add, remove, or change a **user-facing** feature in re-dbviewer:
+
+1. Update [docs/USER_GUIDE.md](docs/USER_GUIDE.md) in the same change when practical.
+2. Cover: what the feature does, how to use it, and any permissions or limits.
+3. If you add a new top-level doc, link it from [README.md](README.md) and [docs/README.md](docs/README.md).
+4. Do not invent unreleased features in the guide — only document what is built.

@@ -48,9 +48,13 @@ pub fn classify_sql(sql: &str) -> Result<SqlKind, String> {
     if trimmed.is_empty() {
         return Err("empty SQL".into());
     }
+    // Stored routines / triggers / events legitimately contain `;` inside BEGIN … END.
+    // They are a single CREATE statement and need DDL permission (checked by the caller).
+    let compound = is_compound_create(trimmed);
     // reject multi-statement for permission clarity
-    if trimmed.matches(';').count() > 1
-        || (trimmed.matches(';').count() == 1 && !trimmed.trim_end().ends_with(';'))
+    if !compound
+        && (trimmed.matches(';').count() > 1
+            || (trimmed.matches(';').count() == 1 && !trimmed.trim_end().ends_with(';')))
     {
         // allow single trailing semicolon; block extra statements
         let without_trail = trimmed.trim_end().trim_end_matches(';');
@@ -109,6 +113,28 @@ pub fn assert_sql_allowed(perms: &Permissions, sql: &str) -> Result<(), String> 
     Ok(())
 }
 
+/// `CREATE [OR REPLACE] [DEFINER=…] PROCEDURE|FUNCTION|TRIGGER|EVENT …`
+fn is_compound_create(sql: &str) -> bool {
+    let mut words = sql
+        .split_whitespace()
+        .map(|w| w.to_ascii_lowercase());
+    if words.next().as_deref() != Some("create") {
+        return false;
+    }
+    // The compound body must be the last thing in the text (guards `…END; DELETE …`).
+    let body_end = sql.trim_end().trim_end_matches(';').trim_end().to_ascii_lowercase();
+    if !body_end.ends_with("end") {
+        return false;
+    }
+    for w in words.take(6) {
+        if w.starts_with("definer=") || w == "or" || w == "replace" || w == "definer" {
+            continue;
+        }
+        return matches!(w.as_str(), "procedure" | "function" | "trigger" | "event");
+    }
+    false
+}
+
 fn strip_leading_noise(sql: &str) -> &str {
     let mut s = sql.trim_start();
     loop {
@@ -154,6 +180,20 @@ fn first_keyword(sql: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allows_compound_routine_create() {
+        let p = Permissions::default();
+        assert!(assert_sql_allowed(
+            &p,
+            "CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END"
+        )
+        .is_ok());
+        assert!(assert_sql_allowed(&p, "SELECT 1; DROP TABLE x").is_err());
+        let mut no_ddl = Permissions::default();
+        no_ddl.allow_ddl = false;
+        assert!(assert_sql_allowed(&no_ddl, "CREATE PROCEDURE p() BEGIN SELECT 1; END").is_err());
+    }
 
     #[test]
     fn blocks_delete_when_disabled() {
