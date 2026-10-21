@@ -33,7 +33,10 @@ export function ToolsHost({
 }) {
   return (
     <Dialog open={tool != null && connection != null} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex h-[88vh] flex-col sm:max-w-[min(1200px,94vw)]">
+      <DialogContent
+        data-testid={tool ? `tool-host-${tool}` : "tool-host"}
+        className="flex h-[88vh] flex-col sm:max-w-[min(1200px,94vw)]"
+      >
         <DialogHeader>
           <DialogTitle>
             {tool ? TITLES[tool] : ""}

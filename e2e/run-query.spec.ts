@@ -1,12 +1,19 @@
 import { test, expect } from "./fixtures";
-import { DEMO_CONNECTION } from "./fixtures/tauriMock";
+import { openDemoWorkspace, setE2eFlags } from "./helpers";
 
 test("run query shows mocked result grid", async ({ page }) => {
-  await page.goto("/");
-  await page.getByTestId(`btn-open-connection-${DEMO_CONNECTION.id}`).click();
-  await expect(page.getByTestId("workspace-root")).toBeVisible();
+  await openDemoWorkspace(page);
   await page.getByTestId("btn-run-query").click();
   await expect(page.getByTestId("result-grid")).toBeVisible();
   await expect(page.getByTestId("result-grid")).toContainText("ok");
   await expect(page.getByTestId("result-grid")).toContainText("1");
+});
+
+test("run query failure shows status error", async ({ page }) => {
+  await openDemoWorkspace(page);
+  await setE2eFlags(page, { failRunSql: true });
+  await page.getByTestId("btn-run-query").click();
+  await expect(page.getByTestId("workspace-status")).toContainText(
+    /e2e: run_sql failed/i,
+  );
 });

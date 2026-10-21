@@ -267,6 +267,7 @@ export default function App() {
                 onActionsReady={(a) =>
                   setActionsById((prev) => ({ ...prev, [c.id]: a }))
                 }
+                onOpenTool={setTool}
               />
             </div>
           ))}

@@ -20,10 +20,12 @@ npm test              # Vitest (src/lib + component RTL)
 npm run test:ui       # Vitest component tests only
 npm run test:rust     # cargo test in src-tauri
 npm run test:e2e      # Playwright browser flows (mocked Tauri IPC)
+npm run test:e2e:headed  # same, visible browser, 1 worker
+npm run test:e2e:ui      # Playwright UI mode (pick & watch tests)
 npm run test:all      # unit + rust + e2e
 ```
 
-First-time Playwright setup: `npx playwright install chromium`
+E2E runs the Vite UI in Chromium with a mocked Tauri `invoke` layer (no real DB). First-time setup: `npx playwright install chromium`.
 
 ## Local MySQL (Docker)
 

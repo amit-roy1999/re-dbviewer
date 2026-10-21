@@ -128,7 +128,7 @@ Click the **connection name** in the sidebar to switch between **Objects** and *
 
 - **Click** a table to open its data.
 - **Wrench** (or double-click) opens **Structure**.
-- **⋯** (or right-click) opens table actions: Edit / Rename / Inspect, Drop / Truncate, Refresh schema.
+- **⋯** (or right-click) opens Beekeeper-style table actions: **View Data**, **View Structure**, **Edit table/view**, **Export To File…** (schema + data SQL), **Import from File…** (CSV append), **Copy Name**, **Hide** (session-only; **Show N hidden** in the Entities header restores them), **SQL: Create** / **SQL: Select Top** (new query tab), **Rename…** / **Drop…** / **Truncate…**, **Duplicate…** (`CREATE TABLE … AS SELECT *` / MSSQL `SELECT * INTO`), **View ERD** (Tools → EER).
 - Long names truncate; wrench and `⋯` sit after the name (with a small gap) and appear on row hover (stay visible while the `⋯` menu is open).
 - Refresh / create / dump actions are also in the **Entities** header icons (and File / View menus where applicable).
 
@@ -201,7 +201,7 @@ One statement at a time for permission checks; use **Import SQL file** for multi
 ### Objects
 
 - **+ next to Entities**: New table / view / routine / database or schema. Hover a schema header for the trash icon (drop, with confirmation; SQLite has no schemas).
-- Table **Structure** (wrench) and **⋯** menu for edit / rename / inspect / drop; create objects via **+** next to Entities.
+- Table **Structure** (wrench) and **⋯** menu (View Data / Structure, export/import, hide, SQL Create/Select Top, rename/drop/truncate/duplicate, View ERD); create objects via **+** next to Entities.
 - **Table editor** has Columns / Indexes / Foreign keys tabs: rename, retype, drop and add columns, plus index and FK changes, shown in the DDL preview before **Apply**.
 - **View editor** — name + SELECT body; applies `CREATE VIEW` / `CREATE OR REPLACE VIEW` (SQLite: drop + create).
 - **Routine editor** (MySQL / MariaDB) — pick a routine in the sidebar list or create one; apply drops and recreates it.

@@ -405,7 +405,12 @@ export default function Home({ onOpen }: Props) {
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="icon-sm" variant="outline" disabled={busy}>
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  disabled={busy}
+                  data-testid={`btn-conn-menu-${c.id}`}
+                >
                   <MoreHorizontal className="size-4" />
                 </Button>
               </DropdownMenuTrigger>

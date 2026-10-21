@@ -67,7 +67,12 @@ export function AppMenuBar({
       <AppLogo className="mr-1" />
 
       <DropdownMenu>
-        <DropdownMenuTrigger className={cn(menuBtn)}>File</DropdownMenuTrigger>
+        <DropdownMenuTrigger
+          data-testid="menubar-file"
+          className={cn(menuBtn)}
+        >
+          File
+        </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-52">
           <DropdownMenuItem onSelect={onNewWindow}>
             New Window
@@ -243,7 +248,12 @@ export function AppMenuBar({
       </DropdownMenu>
 
       <DropdownMenu>
-        <DropdownMenuTrigger className={cn(menuBtn)}>View</DropdownMenuTrigger>
+        <DropdownMenuTrigger
+          data-testid="menubar-view"
+          className={cn(menuBtn)}
+        >
+          View
+        </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-44">
           <DropdownMenuItem
             disabled={!ws}
@@ -325,7 +335,12 @@ export function AppMenuBar({
       </DropdownMenu>
 
       <DropdownMenu>
-        <DropdownMenuTrigger className={cn(menuBtn)}>Tools</DropdownMenuTrigger>
+        <DropdownMenuTrigger
+          data-testid="menubar-tools"
+          className={cn(menuBtn)}
+        >
+          Tools
+        </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-48">
           <DropdownMenuItem
             disabled={!ws}

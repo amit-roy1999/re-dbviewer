@@ -120,6 +120,11 @@ import {
 } from "@/lib/resultExport";
 import { copyText, registerEditor } from "@/lib/clipboard";
 import {
+  duplicateTableSql,
+  qualifySibling,
+  selectTopSql,
+} from "@/lib/tableMenuSql";
+import {
   loadPreferences,
   usePreferences,
   type AppPreferences,
@@ -184,6 +189,7 @@ import {
 import { AdminNav } from "@/components/admin/AdminNav";
 import { AdminWorkbench } from "@/components/admin/AdminWorkbench";
 import { ResizeHandle, clamp } from "@/components/ResizeHandle";
+import type { ToolId } from "@/components/tools/ToolsHost";
 import { logError } from "@/lib/diagnostics";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -236,6 +242,8 @@ type Props = {
   onActionsReady?: (actions: WorkspaceActions | null) => void;
   /** False when another connection tab is in front (keeps state, ignores shortcuts). */
   visible?: boolean;
+  /** Open a Tools dialog (e.g. EER from the table ⋯ menu). */
+  onOpenTool?: (tool: ToolId) => void;
 };
 
 type StructSection = "columns" | "indexes" | "relations";
@@ -424,6 +432,7 @@ export default function Workspace({
   onBack,
   onActionsReady,
   visible = true,
+  onOpenTool,
 }: Props) {
   const engine = connection.engine;
   const [schema, setSchema] = useState<SchemaNode[]>([]);
@@ -509,6 +518,8 @@ export default function Workspace({
   );
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  /** Session-only: tables hidden from the entity tree via ⋯ → Hide. */
+  const [hiddenTables, setHiddenTables] = useState<Set<string>>(() => new Set());
   const [txActive, setTxActive] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpWord, setHelpWord] = useState("");
@@ -803,14 +814,18 @@ export default function Workspace({
     const scoped = selectedSchema
       ? schema.filter((s) => s.name === selectedSchema)
       : schema;
-    if (!qs) return scoped;
     return scoped
       .map((s) => ({
         ...s,
-        children: s.children.filter((c) => c.name.toLowerCase().includes(qs)),
+        children: s.children.filter((c) => {
+          const full = tableRef(s.name, c.name, engine);
+          if (hiddenTables.has(full)) return false;
+          if (qs && !c.name.toLowerCase().includes(qs)) return false;
+          return true;
+        }),
       }))
       .filter((s) => s.children.length > 0);
-  }, [schema, filter, selectedSchema]);
+  }, [schema, filter, selectedSchema, hiddenTables, engine]);
 
   const tableCount = useMemo(
     () => filtered.reduce((n, s) => n + s.children.length, 0),
@@ -2426,6 +2441,127 @@ export default function Workspace({
     }
   }
 
+  async function exportTableToFile(table: string) {
+    const path = await save({
+      defaultPath: `${shortTable(table)}.sql`,
+      filters: [{ name: "SQL", extensions: ["sql"] }],
+    });
+    if (!path) return;
+    setBusy(true);
+    setError("");
+    setStatus("");
+    try {
+      const sqlDump = await invoke<string>("export_table_sql", {
+        table,
+        includeSchema: true,
+        includeData: true,
+      });
+      await invoke("write_text_file", { path, contents: sqlDump });
+      setStatus(`Exported ${table} → ${path}`);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importCsvIntoTable(table: string) {
+    if (!connection.permissions.allowInsert) {
+      setError("INSERT is disabled for this connection");
+      return;
+    }
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "CSV", extensions: ["csv"] }],
+    });
+    if (typeof path !== "string") return;
+    setBusy(true);
+    setError("");
+    setStatus("");
+    try {
+      const csv = await invoke<string>("read_text_file", { path });
+      const n = await invoke<number>("import_table_csv", {
+        table,
+        csv,
+        mode: "append",
+      });
+      setStatus(`Imported ${n} row(s) into ${table}`);
+      const tab = tabs.find((t) => t.id === `data:${table}`);
+      if (tab?.kind === "data" && active === tab.id) {
+        await loadTable(tab.table, tab.offset, tab.filters, tab.sort);
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sqlCreateInTab(table: string) {
+    try {
+      const ddl = await invoke<string>("export_table_sql", {
+        table,
+        includeSchema: true,
+        includeData: false,
+      });
+      newQueryTab(ddl.trim() || `-- no CREATE for ${table}`);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  function sqlSelectTop(table: string) {
+    newQueryTab(selectTopSql(engine, quoteIdent(table)));
+  }
+
+  function hideTable(table: string) {
+    setHiddenTables((prev) => new Set(prev).add(table));
+    if (selectedTable === table) setSelectedTable(null);
+    setStatus(`Hidden ${shortTable(table)}`);
+  }
+
+  function showAllHidden() {
+    const n = hiddenTables.size;
+    setHiddenTables(new Set());
+    if (n) setStatus(`Showed ${n} hidden object(s)`);
+  }
+
+  function askDuplicateTable(table: string) {
+    if (!ddlGuard("Duplicate table")) return;
+    if (tableKinds[table] === "view") {
+      setError("Duplicate is only available for tables");
+      return;
+    }
+    setPrompt({
+      title: `Duplicate ${shortTable(table)}`,
+      label: "New table name",
+      initial: `${shortTable(table)}_copy`,
+      confirmLabel: "Duplicate",
+      onSubmit: async (name) => {
+        const bare = name.trim();
+        if (!bare || bare === shortTable(table)) return;
+        const dest = qualifySibling(engine, table, bare);
+        setBusy(true);
+        setError("");
+        try {
+          const sql = duplicateTableSql(
+            engine,
+            quoteIdent(table),
+            quoteIdent(dest),
+          );
+          await invoke("run_sql", { sql });
+          setStatus(`Duplicated ${table} → ${dest}`);
+          await loadSchema();
+          openData(dest);
+        } catch (e) {
+          setError(String(e));
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
+  }
+
   async function runConfirm() {
     const c = confirm;
     if (!c) return;
@@ -3272,6 +3408,17 @@ export default function Workspace({
               Entities {schemaReady ? tableCount : "…"}
             </span>
             <div className="flex items-center">
+              {hiddenTables.size > 0 ? (
+                <button
+                  type="button"
+                  data-testid="btn-show-hidden"
+                  className="mr-0.5 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                  title="Show hidden objects"
+                  onClick={showAllHidden}
+                >
+                  Show {hiddenTables.size} hidden
+                </button>
+              ) : null}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -3403,6 +3550,7 @@ export default function Workspace({
                       return (
                         <div
                           key={full}
+                          data-testid={`schema-row-${c.name}`}
                           className={cn(
                             "group flex w-full min-w-0 items-center overflow-hidden rounded-md",
                             selected && "bg-muted",
@@ -3415,6 +3563,7 @@ export default function Workspace({
                         >
                           <button
                             type="button"
+                            data-testid={`schema-open-${c.name}`}
                             className="flex h-8 min-w-0 flex-1 basis-0 items-center gap-1.5 overflow-hidden px-2 text-left text-xs hover:bg-muted/80"
                             onClick={() => openData(full)}
                             onDoubleClick={() => openStructure(full)}
@@ -3455,6 +3604,7 @@ export default function Workspace({
                                 <button
                                   type="button"
                                   title="Table actions"
+                                  data-testid={`schema-menu-${c.name}`}
                                   className="rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground data-[state=open]:bg-background data-[state=open]:text-foreground"
                                 >
                                   <MoreHorizontal className="size-3.5" />
@@ -3464,18 +3614,12 @@ export default function Workspace({
                                 <DropdownMenuItem
                                   onSelect={() => openData(full)}
                                 >
-                                  Open data
+                                  View Data
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onSelect={() => openStructure(full)}
                                 >
-                                  Structure
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  disabled={isView || !ddl}
-                                  onSelect={() => void openTableEditor(full)}
-                                >
-                                  Edit table
+                                  View Structure
                                 </DropdownMenuItem>
                                 {isView ? (
                                   <DropdownMenuItem
@@ -3484,7 +3628,55 @@ export default function Workspace({
                                   >
                                     Edit view
                                   </DropdownMenuItem>
-                                ) : null}
+                                ) : (
+                                  <DropdownMenuItem
+                                    disabled={!ddl}
+                                    onSelect={() => void openTableEditor(full)}
+                                  >
+                                    Edit table
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuItem
+                                  disabled={busy}
+                                  onSelect={() => void exportTableToFile(full)}
+                                >
+                                  Export To File…
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  disabled={
+                                    busy ||
+                                    !connection.permissions.allowInsert ||
+                                    isView
+                                  }
+                                  onSelect={() => void importCsvIntoTable(full)}
+                                >
+                                  Import from File…
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onSelect={() =>
+                                    void copyText(shortTable(full))
+                                  }
+                                >
+                                  Copy Name
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => hideTable(full)}
+                                >
+                                  Hide
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  disabled={busy}
+                                  onSelect={() => void sqlCreateInTab(full)}
+                                >
+                                  SQL: Create
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => sqlSelectTop(full)}
+                                >
+                                  SQL: Select Top
+                                </DropdownMenuItem>
                                 <DropdownMenuItem
                                   disabled={isView || !ddl}
                                   onSelect={() => askRenameTable(full)}
@@ -3492,17 +3684,11 @@ export default function Workspace({
                                   Rename…
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onSelect={() => void inspectTable(full)}
-                                >
-                                  Inspect…
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
                                   variant="destructive"
                                   disabled={!ddl}
                                   onSelect={() => askDrop(full)}
                                 >
-                                  Drop {isView ? "view" : "table"}…
+                                  Drop…
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   variant="destructive"
@@ -3511,14 +3697,17 @@ export default function Workspace({
                                 >
                                   Truncate…
                                 </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  disabled={busy || isView || !ddl}
+                                  onSelect={() => askDuplicateTable(full)}
+                                >
+                                  Duplicate…
+                                </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
-                                  onSelect={() => {
-                                    setSchemaReady(false);
-                                    void loadSchema();
-                                  }}
+                                  onSelect={() => onOpenTool?.("eer")}
                                 >
-                                  Refresh schema
+                                  View ERD
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
@@ -4841,6 +5030,7 @@ export default function Workspace({
           )}
           <span className="text-muted-foreground/40">|</span>
           <span
+            data-testid="workspace-status"
             className={cn(
               "min-w-0 truncate",
               error ? "text-destructive" : "text-muted-foreground",
