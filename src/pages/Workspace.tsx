@@ -39,7 +39,6 @@ import {
   Save,
   AlignLeft,
   BookMarked,
-  MoreHorizontal,
   Pencil,
   Rows3,
   Braces,
@@ -48,6 +47,7 @@ import {
   BookOpen,
   Trash2,
   Database,
+  MoreHorizontal,
 } from "lucide-react";
 import {
   open,
@@ -175,6 +175,12 @@ import {
   type AdminViewId,
 } from "@/lib/adminNav";
 import { adminSupported } from "@/lib/adminSql";
+import {
+  formatTableStatsLine,
+  parseTableStats,
+  tableStatsSql,
+  type TableStats,
+} from "@/lib/tableStats";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { AdminWorkbench } from "@/components/admin/AdminWorkbench";
 import { ResizeHandle, clamp } from "@/components/ResizeHandle";
@@ -437,6 +443,12 @@ export default function Workspace({
     "run" | "explain" | "script" | null
   >(null);
   const [details, setDetails] = useState<TableDetails | null>(null);
+  const [structStats, setStructStats] = useState<{
+    table: string;
+    loading: boolean;
+    stats: TableStats | null;
+  } | null>(null);
+  const structStatsGen = useRef(0);
   const [colFilter, setColFilter] = useState("");
   const [draftFilters, setDraftFilters] = useState<TableFilter[]>([
     { column: "", op: "eq", value: "" },
@@ -827,8 +839,10 @@ export default function Workspace({
     } else if (activeTab?.kind === "structure") {
       setDataResult(null);
       void loadDetails(activeTab.table);
+      void loadStructStats(activeTab.table);
     } else {
       setDetails(null);
+      setStructStats(null);
     }
     if (activeTab?.kind === "sql") swapEditor(activeTab.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1097,6 +1111,31 @@ export default function Workspace({
       setDetails(await fetchDetails(table));
     } catch (e) {
       setError(String(e));
+    }
+  }
+
+  async function loadStructStats(table: string) {
+    const gen = ++structStatsGen.current;
+    setStructStats({ table, loading: true, stats: null });
+    const sql = tableStatsSql(engine, table);
+    if (!sql) {
+      if (structStatsGen.current === gen) {
+        setStructStats({ table, loading: false, stats: null });
+      }
+      return;
+    }
+    try {
+      const res = await invoke<QueryResult>("run_sql", { sql });
+      if (structStatsGen.current !== gen) return;
+      setStructStats({
+        table,
+        loading: false,
+        stats: parseTableStats(engine, res),
+      });
+    } catch {
+      if (structStatsGen.current === gen) {
+        setStructStats({ table, loading: false, stats: null });
+      }
     }
   }
 
@@ -2196,10 +2235,6 @@ export default function Workspace({
     );
   }
 
-  function closeTabsForTable(table: string) {
-    closeTabsForTables([table]);
-  }
-
   function closeTabsForTables(tables: string[]) {
     const doomed = new Set(
       tabs
@@ -2258,62 +2293,8 @@ export default function Workspace({
     return true;
   }
 
-  async function generateSelect(table: string) {
-    try {
-      const d = await fetchDetails(table);
-      const cols = d.columns.map((c) => `  ${quoteIdent(c.name)}`).join(",\n");
-      newQueryTab(`SELECT\n${cols}\nFROM ${quoteIdent(table)}\nLIMIT 100;`);
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  async function generateInsert(table: string) {
-    try {
-      const d = await fetchDetails(table);
-      const cols = d.columns.map((c) => quoteIdent(c.name)).join(", ");
-      const vals = d.columns.map(() => "NULL").join(", ");
-      newQueryTab(
-        `INSERT INTO ${quoteIdent(table)} (${cols})\nVALUES (${vals});`,
-      );
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  /** WHERE pk = ? (falls back to the first column with a reminder when there is no PK). */
-  function pkWherePlaceholder(d: TableDetails) {
-    const pk = d.columns.filter((c) => c.isPk);
-    const keys = pk.length ? pk : d.columns.slice(0, 1);
-    return {
-      keys,
-      where: keys.map((c) => `${quoteIdent(c.name)} = ?`).join(" AND "),
-      note: pk.length ? "" : "-- no primary key: adjust the WHERE clause\n",
-    };
-  }
-
-  async function generateUpdate(table: string) {
-    try {
-      const d = await fetchDetails(table);
-      const { keys, where, note } = pkWherePlaceholder(d);
-      const rest = d.columns.filter((c) => !keys.includes(c));
-      const sets = (rest.length ? rest : d.columns)
-        .map((c) => `  ${quoteIdent(c.name)} = NULL`)
-        .join(",\n");
-      newQueryTab(`${note}UPDATE ${quoteIdent(table)}\nSET\n${sets}\nWHERE ${where};`);
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  async function generateDelete(table: string) {
-    try {
-      const d = await fetchDetails(table);
-      const { where, note } = pkWherePlaceholder(d);
-      newQueryTab(`${note}DELETE FROM ${quoteIdent(table)}\nWHERE ${where};`);
-    } catch (e) {
-      setError(String(e));
-    }
+  function closeTabsForTable(table: string) {
+    closeTabsForTables([table]);
   }
 
   function askDrop(table: string) {
@@ -2321,7 +2302,8 @@ export default function Workspace({
     const isView = tableKinds[table] === "view";
     setConfirm({
       title: `Drop ${isView ? "view" : "table"} ${shortTable(table)}?`,
-      description: "This permanently removes the object and its data. It cannot be undone.",
+      description:
+        "This permanently removes the object and its data. It cannot be undone.",
       confirmLabel: "Drop",
       run: async () => {
         await invoke("run_sql", {
@@ -2353,6 +2335,95 @@ export default function Workspace({
         }
       },
     });
+  }
+
+  function askRenameTable(table: string) {
+    if (!ddlGuard("Rename table")) return;
+    setPrompt({
+      title: `Rename ${shortTable(table)}`,
+      label: "New name",
+      initial: shortTable(table),
+      confirmLabel: "Rename",
+      onSubmit: async (name) => {
+        if (name === shortTable(table)) return;
+        setBusy(true);
+        setError("");
+        try {
+          await invoke("run_sql", { sql: renameTableSql(engine, table, name) });
+          closeTabsForTable(table);
+          setSelectedTable(renamedRef(table, name));
+          setColumnsCache((prev) => {
+            const { [table]: _drop, ...rest } = prev;
+            return rest;
+          });
+          setStatus(`Renamed ${table} → ${name}`);
+          await loadSchema();
+        } catch (e) {
+          setError(String(e));
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
+  }
+
+  async function openTableEditor(table: string) {
+    const id = `tableedit:${table}`;
+    if (tabs.some((t) => t.id === id)) {
+      setActive(id);
+      return;
+    }
+    try {
+      const d = await fetchDetails(table);
+      const cols = columnsToEditable(d.columns);
+      const idx = indexesToEditable(d.indexes);
+      const fks = fksToEditable(d.foreignKeys);
+      setTabs((prev) =>
+        prev.some((t) => t.id === id)
+          ? prev
+          : [
+              ...prev,
+              {
+                kind: "tableEdit",
+                id,
+                table,
+                mode: "alter",
+                columns: cols,
+                originalColumns: cols.map((c) => ({ ...c })),
+                indexes: idx,
+                originalIndexes: idx.map((i) => ({ ...i })),
+                fks,
+                originalFks: fks.map((f) => ({ ...f })),
+              },
+            ],
+      );
+      setSelectedTable(table);
+      setActive(id);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function openViewEditor(ref: string) {
+    const id = `viewedit:${ref}`;
+    if (tabs.some((t) => t.id === id)) {
+      setActive(id);
+      return;
+    }
+    try {
+      const res = await invoke<QueryResult>("run_sql", {
+        sql: viewDefinitionSql(engine, ref),
+      });
+      const body = extractViewBody(String(res.rows[0]?.[0] ?? ""));
+      setTabs((prev) =>
+        prev.some((t) => t.id === id)
+          ? prev
+          : [...prev, { kind: "viewEdit", id, name: ref, body, mode: "alter" }],
+      );
+      setActive(id);
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
   async function runConfirm() {
@@ -2423,43 +2494,6 @@ export default function Workspace({
       },
     ]);
     setActive(id);
-  }
-
-  async function openTableEditor(table: string) {
-    const id = `tableedit:${table}`;
-    if (tabs.some((t) => t.id === id)) {
-      setActive(id);
-      return;
-    }
-    try {
-      const d = await fetchDetails(table);
-      const cols = columnsToEditable(d.columns);
-      const idx = indexesToEditable(d.indexes);
-      const fks = fksToEditable(d.foreignKeys);
-      setTabs((prev) =>
-        prev.some((t) => t.id === id)
-          ? prev
-          : [
-              ...prev,
-              {
-                kind: "tableEdit",
-                id,
-                table,
-                mode: "alter",
-                columns: cols,
-                originalColumns: cols.map((c) => ({ ...c })),
-                indexes: idx,
-                originalIndexes: idx.map((i) => ({ ...i })),
-                fks,
-                originalFks: fks.map((f) => ({ ...f })),
-              },
-            ],
-      );
-      setSelectedTable(table);
-      setActive(id);
-    } catch (e) {
-      setError(String(e));
-    }
   }
 
   function patchTableEdit(id: string, patch: Partial<TableEditTab>) {
@@ -2581,28 +2615,6 @@ export default function Workspace({
       },
     ]);
     setActive(id);
-  }
-
-  async function openViewEditor(ref: string) {
-    const id = `viewedit:${ref}`;
-    if (tabs.some((t) => t.id === id)) {
-      setActive(id);
-      return;
-    }
-    try {
-      const res = await invoke<QueryResult>("run_sql", {
-        sql: viewDefinitionSql(engine, ref),
-      });
-      const body = extractViewBody(String(res.rows[0]?.[0] ?? ""));
-      setTabs((prev) =>
-        prev.some((t) => t.id === id)
-          ? prev
-          : [...prev, { kind: "viewEdit", id, name: ref, body, mode: "alter" }],
-      );
-      setActive(id);
-    } catch (e) {
-      setError(String(e));
-    }
   }
 
   function patchViewEdit(id: string, patch: Partial<ViewEditTab>) {
@@ -2811,36 +2823,6 @@ export default function Workspace({
         }
         setStatus(`Dropped ${name}`);
         await loadSchema();
-      },
-    });
-  }
-
-  function askRenameTable(table: string) {
-    if (!ddlGuard("Rename table")) return;
-    setPrompt({
-      title: `Rename ${shortTable(table)}`,
-      label: "New name",
-      initial: shortTable(table),
-      confirmLabel: "Rename",
-      onSubmit: async (name) => {
-        if (name === shortTable(table)) return;
-        setBusy(true);
-        setError("");
-        try {
-          await invoke("run_sql", { sql: renameTableSql(engine, table, name) });
-          closeTabsForTable(table);
-          setSelectedTable(renamedRef(table, name));
-          setColumnsCache((prev) => {
-            const { [table]: _drop, ...rest } = prev;
-            return rest;
-          });
-          setStatus(`Renamed ${table} → ${name}`);
-          await loadSchema();
-        } catch (e) {
-          setError(String(e));
-        } finally {
-          setBusy(false);
-        }
       },
     });
   }
@@ -3422,7 +3404,7 @@ export default function Workspace({
                         <div
                           key={full}
                           className={cn(
-                            "group flex items-center rounded-md",
+                            "group flex min-w-0 items-center rounded-md",
                             selected && "bg-muted",
                           )}
                           onContextMenu={(e) => {
@@ -3444,114 +3426,96 @@ export default function Workspace({
                             )}
                             <span className="truncate">{c.name}</span>
                           </button>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                className="rounded p-1 opacity-0 hover:bg-background group-hover:opacity-100"
-                                onClick={() => openStructure(full)}
-                              >
-                                <Wrench className="size-3.5 text-muted-foreground" />
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent>Structure</TooltipContent>
-                          </Tooltip>
-                          <DropdownMenu
-                            open={menuFor === full}
-                            onOpenChange={(o) => setMenuFor(o ? full : null)}
-                          >
-                            <DropdownMenuTrigger asChild>
-                              <button
-                                type="button"
-                                className="mr-1 rounded p-1 opacity-0 hover:bg-background group-hover:opacity-100 data-[state=open]:opacity-100"
-                              >
-                                <MoreHorizontal className="size-3.5 text-muted-foreground" />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start" className="w-48">
-                              <DropdownMenuItem onSelect={() => openData(full)}>
-                                Open data
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onSelect={() => openStructure(full)}
-                              >
-                                Structure
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={isView || !ddl}
-                                onSelect={() => void openTableEditor(full)}
-                              >
-                                Edit table
-                              </DropdownMenuItem>
-                              {isView ? (
-                                <DropdownMenuItem
-                                  disabled={!ddl}
-                                  onSelect={() => void openViewEditor(full)}
+                          <div className="flex w-12 shrink-0 items-center justify-end">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  title="Structure"
+                                  className="rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                                  onClick={() => openStructure(full)}
                                 >
-                                  Edit view
+                                  <Wrench className="size-3.5" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>Structure</TooltipContent>
+                            </Tooltip>
+                            <DropdownMenu
+                              open={menuFor === full}
+                              onOpenChange={(o) => setMenuFor(o ? full : null)}
+                            >
+                              <DropdownMenuTrigger asChild>
+                                <button
+                                  type="button"
+                                  title="Table actions"
+                                  className="rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground data-[state=open]:bg-background data-[state=open]:text-foreground"
+                                >
+                                  <MoreHorizontal className="size-3.5" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="start" className="w-48">
+                                <DropdownMenuItem
+                                  onSelect={() => openData(full)}
+                                >
+                                  Open data
                                 </DropdownMenuItem>
-                              ) : null}
-                              <DropdownMenuItem
-                                disabled={isView || !ddl}
-                                onSelect={() => askRenameTable(full)}
-                              >
-                                Rename…
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onSelect={() => void inspectTable(full)}
-                              >
-                                Inspect…
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onSelect={() => void generateSelect(full)}
-                              >
-                                Generate SELECT
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={isView}
-                                onSelect={() => void generateInsert(full)}
-                              >
-                                Generate INSERT
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={isView}
-                                onSelect={() => void generateUpdate(full)}
-                              >
-                                Generate UPDATE
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={isView}
-                                onSelect={() => void generateDelete(full)}
-                              >
-                                Generate DELETE
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                variant="destructive"
-                                disabled={!ddl}
-                                onSelect={() => askDrop(full)}
-                              >
-                                Drop {isView ? "view" : "table"}…
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                variant="destructive"
-                                disabled={isView || !ddl}
-                                onSelect={() => askTruncate(full)}
-                              >
-                                Truncate…
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onSelect={() => {
-                                  setSchemaReady(false);
-                                  void loadSchema();
-                                }}
-                              >
-                                Refresh schema
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                                <DropdownMenuItem
+                                  onSelect={() => openStructure(full)}
+                                >
+                                  Structure
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  disabled={isView || !ddl}
+                                  onSelect={() => void openTableEditor(full)}
+                                >
+                                  Edit table
+                                </DropdownMenuItem>
+                                {isView ? (
+                                  <DropdownMenuItem
+                                    disabled={!ddl}
+                                    onSelect={() => void openViewEditor(full)}
+                                  >
+                                    Edit view
+                                  </DropdownMenuItem>
+                                ) : null}
+                                <DropdownMenuItem
+                                  disabled={isView || !ddl}
+                                  onSelect={() => askRenameTable(full)}
+                                >
+                                  Rename…
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => void inspectTable(full)}
+                                >
+                                  Inspect…
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  disabled={!ddl}
+                                  onSelect={() => askDrop(full)}
+                                >
+                                  Drop {isView ? "view" : "table"}…
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  disabled={isView || !ddl}
+                                  onSelect={() => askTruncate(full)}
+                                >
+                                  Truncate…
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    setSchemaReady(false);
+                                    void loadSchema();
+                                  }}
+                                >
+                                  Refresh schema
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
                         </div>
                       );
                     })}
@@ -4589,9 +4553,35 @@ export default function Workspace({
                     ) : null}
                   </button>
                 ))}
-                <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-                  {activeTab.table}
-                  {details ? ` · ${details.columns.length} columns` : ""}
+                <span
+                  className="ml-auto max-w-[55%] truncate font-mono text-[11px] text-muted-foreground"
+                  title={formatTableStatsLine({
+                    table: activeTab.table,
+                    columns: details?.columns.length,
+                    indexes: details?.indexes.length,
+                    fks: details?.foreignKeys.length,
+                    stats:
+                      structStats?.table === activeTab.table
+                        ? structStats.stats
+                        : null,
+                    loading:
+                      structStats?.table === activeTab.table &&
+                      structStats.loading,
+                  })}
+                >
+                  {formatTableStatsLine({
+                    table: activeTab.table,
+                    columns: details?.columns.length,
+                    indexes: details?.indexes.length,
+                    fks: details?.foreignKeys.length,
+                    stats:
+                      structStats?.table === activeTab.table
+                        ? structStats.stats
+                        : null,
+                    loading:
+                      structStats?.table === activeTab.table &&
+                      structStats.loading,
+                  })}
                 </span>
               </div>
 
@@ -4611,7 +4601,10 @@ export default function Workspace({
                       size="sm"
                       variant="ghost"
                       className="h-8 w-8 p-0"
-                      onClick={() => void loadDetails(activeTab.table)}
+                      onClick={() => {
+                        void loadDetails(activeTab.table);
+                        void loadStructStats(activeTab.table);
+                      }}
                     >
                       <RefreshCw className="size-3.5" />
                     </Button>
@@ -4732,6 +4725,7 @@ export default function Workspace({
           {activeTab?.kind === "tableEdit" ? (
             <TableEditor
               mode={activeTab.mode}
+              engine={engine}
               tableName={activeTab.table}
               onTableNameChange={(name) =>
                 patchTableEdit(activeTab.id, { table: name })

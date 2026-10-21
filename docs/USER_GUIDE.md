@@ -126,21 +126,17 @@ Click the **connection name** in the sidebar to switch between **Objects** and *
 
 ### Schema tree
 
-Hover a table and click **⋯** (or right-click) for:
-
-| Action | Behavior |
-|--------|----------|
-| Open data / Structure | Same as clicking / double-clicking |
-| Edit table | Opens a **Table editor** tab (needs DDL permission; not for views) |
-| Generate SELECT / INSERT / UPDATE / DELETE | Opens a new Query tab with a template using the table's columns; UPDATE / DELETE use `WHERE pk = ?` (fill in the `?`) |
-| Drop… / Truncate… | Confirmation dialog, then runs `DROP` / `TRUNCATE` (SQLite uses `DELETE FROM`). Needs DDL permission |
-| Refresh schema | Reloads the tree (also the refresh icon next to **Entities**) |
+- **Click** a table to open its data.
+- **Wrench** (or double-click) opens **Structure**.
+- **⋯** (or right-click) opens table actions: Edit / Rename / Inspect, Drop / Truncate, Refresh schema.
+- Both wrench and `⋯` stay visible when the sidebar is narrow; the table name truncates instead.
+- Refresh / create / dump actions are also in the **Entities** header icons (and File / View menus where applicable).
 
 The **+** next to **Entities** opens the Table editor in create mode. A small info strip at the bottom of the sidebar shows the selected object, kind and column count. A **session strip** under the connection name shows engine, host / user / database (from the saved connection) and the server `VERSION()`, fetched once. Each connection tab in the top strip carries a coloured left stripe (the connection's accent colour).
 
 ### Table editor
 
-Edit column name / type / nullability / default / PK, see the generated DDL, then **Apply**.
+Edit column name / type / nullability / default / PK, see the generated DDL, then **Apply**. **Type** is an engine-specific dropdown (not free text); if a column already has a type outside the list, that value stays as an option.
 
 - **Create** — runs `CREATE TABLE`; the tab then switches to edit mode for the new table.
 - **Edit** — only **new columns** are applied (`ALTER TABLE … ADD COLUMN`). Renames, type changes and drops must be done in SQL (**Open SQL in Query**).
@@ -205,7 +201,7 @@ One statement at a time for permission checks; use **Import SQL file** for multi
 ### Objects
 
 - **+ next to Entities**: New table / view / routine / database or schema. Hover a schema header for the trash icon (drop, with confirmation; SQLite has no schemas).
-- Table menu: **Rename…**, **Inspect…** (CREATE SQL, row / column / index / FK counts), **Edit view** for views.
+- Table **Structure** (wrench) and **⋯** menu for edit / rename / inspect / drop; create objects via **+** next to Entities.
 - **Table editor** has Columns / Indexes / Foreign keys tabs: rename, retype, drop and add columns, plus index and FK changes, shown in the DDL preview before **Apply**.
 - **View editor** — name + SELECT body; applies `CREATE VIEW` / `CREATE OR REPLACE VIEW` (SQLite: drop + create).
 - **Routine editor** (MySQL / MariaDB) — pick a routine in the sidebar list or create one; apply drops and recreates it.
@@ -262,6 +258,10 @@ Click a column header: ascending → descending → unsorted.
 ---
 
 ## Table structure
+
+Open from the sidebar wrench (or double-click a table). Wrench and `⋯` stay visible when the sidebar is narrow — the table name truncates instead.
+
+The structure header shows a stats line: **columns · indexes · FKs · rows · size** when available. Row counts are approximate (`~N rows`) from the catalog on MySQL / MariaDB / PostgreSQL / SQL Server; SQLite uses an exact `COUNT(*)`. Size (data + indexes) is shown for MySQL / MariaDB / PostgreSQL; omitted on SQLite / SQL Server.
 
 Structure tab sections:
 

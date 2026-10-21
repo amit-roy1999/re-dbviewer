@@ -11,12 +11,14 @@ import {
   type TableAdvanced,
 } from "@/lib/tableDdl";
 import { cn } from "@/lib/utils";
+import { typeSelectOptions } from "@/lib/columnTypes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Trash2 } from "lucide-react";
 
 type Props = {
   mode: "create" | "alter";
+  engine: string;
   tableName: string;
   onTableNameChange?: (name: string) => void;
   columns: EditableColumn[];
@@ -37,6 +39,7 @@ type Props = {
 
 export function TableEditor({
   mode,
+  engine,
   tableName,
   onTableNameChange,
   columns,
@@ -344,11 +347,17 @@ export function TableEditor({
                   />
                 </td>
                 <td className="py-1 pr-2">
-                  <Input
-                    className="h-7 font-mono text-xs"
+                  <select
+                    className="h-7 w-full min-w-[8rem] cursor-pointer appearance-none rounded-md border border-input bg-background px-2 font-mono text-xs text-foreground outline-none hover:bg-muted/40 focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/30 dark:bg-input/30 dark:[color-scheme:dark]"
                     value={c.dataType}
                     onChange={(e) => update(i, { dataType: e.target.value })}
-                  />
+                  >
+                    {typeSelectOptions(engine, c.dataType).map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
                 </td>
                 <td className="py-1 pr-2">
                   <input
