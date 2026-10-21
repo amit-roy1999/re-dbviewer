@@ -3165,7 +3165,7 @@ export default function Workspace({
       <div className="flex min-h-0 flex-1">
         {/* Entity browser */}
         <aside
-          className="flex shrink-0 flex-col border-r border-border bg-card"
+          className="flex min-w-0 shrink-0 flex-col overflow-hidden border-r border-border bg-card"
           style={{ width: sidebarW }}
         >
           <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
@@ -3359,8 +3359,8 @@ export default function Workspace({
             </div>
           </div>
 
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="flex flex-col gap-0.5 px-1.5 pb-2">
+          <ScrollArea className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            <div className="flex w-full min-w-0 max-w-full flex-col gap-0.5 px-1.5 pb-2">
               {!schemaReady ? (
                 <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
                   <Loader2 className="size-3.5 animate-spin" />
@@ -3404,7 +3404,7 @@ export default function Workspace({
                         <div
                           key={full}
                           className={cn(
-                            "group flex min-w-0 items-center rounded-md",
+                            "group flex w-full min-w-0 items-center overflow-hidden rounded-md",
                             selected && "bg-muted",
                           )}
                           onContextMenu={(e) => {
@@ -3415,7 +3415,7 @@ export default function Workspace({
                         >
                           <button
                             type="button"
-                            className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-xs hover:bg-muted/80"
+                            className="flex h-8 min-w-0 flex-1 basis-0 items-center gap-1.5 overflow-hidden px-2 text-left text-xs hover:bg-muted/80"
                             onClick={() => openData(full)}
                             onDoubleClick={() => openStructure(full)}
                           >
@@ -3426,7 +3426,14 @@ export default function Workspace({
                             )}
                             <span className="truncate">{c.name}</span>
                           </button>
-                          <div className="flex w-12 shrink-0 items-center justify-end">
+                          <div
+                            className={cn(
+                              "ml-1 flex shrink-0 items-center",
+                              menuFor === full
+                                ? "opacity-100"
+                                : "opacity-0 group-hover:opacity-100",
+                            )}
+                          >
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <button

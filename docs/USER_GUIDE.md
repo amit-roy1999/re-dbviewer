@@ -129,7 +129,7 @@ Click the **connection name** in the sidebar to switch between **Objects** and *
 - **Click** a table to open its data.
 - **Wrench** (or double-click) opens **Structure**.
 - **⋯** (or right-click) opens table actions: Edit / Rename / Inspect, Drop / Truncate, Refresh schema.
-- Both wrench and `⋯` stay visible when the sidebar is narrow; the table name truncates instead.
+- Long names truncate; wrench and `⋯` sit after the name (with a small gap) and appear on row hover (stay visible while the `⋯` menu is open).
 - Refresh / create / dump actions are also in the **Entities** header icons (and File / View menus where applicable).
 
 The **+** next to **Entities** opens the Table editor in create mode. A small info strip at the bottom of the sidebar shows the selected object, kind and column count. A **session strip** under the connection name shows engine, host / user / database (from the saved connection) and the server `VERSION()`, fetched once. Each connection tab in the top strip carries a coloured left stripe (the connection's accent colour).
@@ -259,7 +259,7 @@ Click a column header: ascending → descending → unsorted.
 
 ## Table structure
 
-Open from the sidebar wrench (or double-click a table). Wrench and `⋯` stay visible when the sidebar is narrow — the table name truncates instead.
+Open from the sidebar wrench (or double-click a table). Long names truncate; wrench/`⋯` show after the name on hover.
 
 The structure header shows a stats line: **columns · indexes · FKs · rows · size** when available. Row counts are approximate (`~N rows`) from the catalog on MySQL / MariaDB / PostgreSQL / SQL Server; SQLite uses an exact `COUNT(*)`. Size (data + indexes) is shown for MySQL / MariaDB / PostgreSQL; omitted on SQLite / SQL Server.
 
