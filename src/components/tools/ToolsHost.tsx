@@ -11,22 +11,37 @@ import { SchemaCompare } from "@/components/tools/SchemaCompare";
 import { MigrationWizard } from "@/components/tools/MigrationWizard";
 import { FakeDataFactory } from "@/components/tools/FakeDataFactory";
 import { VisualizeData } from "@/components/tools/VisualizeData";
+import { VisualQueryBuilder } from "@/components/tools/VisualQueryBuilder";
+import { DataCompare } from "@/components/tools/DataCompare";
+import { SchemaDataSync } from "@/components/tools/SchemaDataSync";
+import { PivotTool } from "@/components/tools/PivotTool";
+import { QueryNotebook } from "@/components/tools/QueryNotebook";
 
 export type ToolId =
   | "admin"
   | "eer"
   | "compare"
+  | "dataCompare"
+  | "schemaSync"
   | "migrate"
   | "fakeData"
-  | "visualize";
+  | "visualize"
+  | "vqb"
+  | "pivot"
+  | "notebook";
 
 const TITLES: Record<ToolId, string> = {
   admin: "Server Admin",
   eer: "EER Diagram",
   compare: "Schema Compare",
+  dataCompare: "Data Compare",
+  schemaSync: "Schema Sync",
   migrate: "Migration Wizard",
   fakeData: "Fake Data Factory",
   visualize: "Visualize Data",
+  vqb: "Visual Query Builder",
+  pivot: "Pivot / Crosstab",
+  notebook: "Query Notebook",
 };
 
 /** Full-size dialog hosting the admin/modeling tools; they act on the front connection. */
@@ -61,6 +76,12 @@ export function ToolsHost({
             <EerDiagram connection={connection} onClose={onClose} />
           ) : null}
           {connection && tool === "compare" ? <SchemaCompare connection={connection} /> : null}
+          {connection && tool === "dataCompare" ? (
+            <DataCompare connection={connection} />
+          ) : null}
+          {connection && tool === "schemaSync" ? (
+            <SchemaDataSync connection={connection} />
+          ) : null}
           {connection && tool === "migrate" ? <MigrationWizard connection={connection} /> : null}
           {connection && tool === "fakeData" ? (
             <FakeDataFactory connection={connection} />
@@ -70,6 +91,15 @@ export function ToolsHost({
               connection={connection}
               onMovedToTab={onClose}
             />
+          ) : null}
+          {connection && tool === "vqb" ? (
+            <VisualQueryBuilder connection={connection} />
+          ) : null}
+          {connection && tool === "pivot" ? (
+            <PivotTool connection={connection} />
+          ) : null}
+          {connection && tool === "notebook" ? (
+            <QueryNotebook connection={connection} />
           ) : null}
         </div>
       </DialogContent>

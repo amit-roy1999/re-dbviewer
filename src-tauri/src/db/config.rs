@@ -46,6 +46,12 @@ pub struct ConnectionConfig {
     /// Frontend hint: when false on save, clear any stored password. Not persisted meaningfully.
     #[serde(default = "default_store_password")]
     pub store_password: bool,
+    /// When true, UI always confirms destructive / write SQL (production-safe).
+    #[serde(default)]
+    pub safe_mode: bool,
+    /// Prefer ssh-agent keys (still BatchMode — agent must already hold the key).
+    #[serde(default)]
+    pub ssh_use_agent: bool,
 }
 
 fn default_store_password() -> bool {
@@ -176,5 +182,28 @@ mod tests {
         assert_eq!(back.host.as_deref(), Some("localhost"));
         assert_eq!(back.port, Some(5432));
         assert_eq!(back.database_or(""), "db");
+    }
+
+    #[test]
+    fn password_storage_flags_serde_camel_case() {
+        let cfg = ConnectionConfig {
+            password_in_keyring: true,
+            password_in_vault: false,
+            store_password: false,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"passwordInKeyring\":true"));
+        assert!(json.contains("\"passwordInVault\":false"));
+        assert!(json.contains("\"storePassword\":false"));
+        let back: ConnectionConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.password_in_keyring);
+        assert!(!back.password_in_vault);
+        assert!(!back.store_password);
+
+        let legacy: ConnectionConfig = serde_json::from_str(r#"{"host":"h"}"#).unwrap();
+        assert!(!legacy.password_in_keyring);
+        assert!(!legacy.password_in_vault);
+        assert!(legacy.store_password); // default true
     }
 }

@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  addFkSql,
+  cloneEerModel,
+  dropFkSql,
   eerEdges,
   findRefTable,
   generateCreateSql,
   layoutEer,
+  pendingFkDdl,
   validateModel,
   type EerModel,
   type EerTable,
@@ -116,6 +120,29 @@ describe("eerModel", () => {
     };
     expect(validateModel(broken).some((m) => /primary key/i.test(m))).toBe(
       true,
+    );
+  });
+
+  it("pendingFkDdl emits drop and add", () => {
+    const base = cloneEerModel(model);
+    const edited = cloneEerModel(model);
+    edited.tables[1].details.foreignKeys = [];
+    edited.tables[0].details.foreignKeys = [
+      {
+        name: "fk_users_self",
+        columns: ["id"],
+        refTable: "db.users",
+        refColumns: ["id"],
+      },
+    ];
+    const sql = pendingFkDdl(base, edited);
+    expect(sql).toMatch(/DROP FOREIGN KEY/);
+    expect(sql).toMatch(/ADD CONSTRAINT/);
+    expect(dropFkSql("postgres", "t", { name: "fk", columns: ["a"], refTable: "u", refColumns: ["id"] })).toMatch(
+      /DROP CONSTRAINT/,
+    );
+    expect(addFkSql("postgres", "t", { name: "fk", columns: ["a"], refTable: "u", refColumns: ["id"] })).toMatch(
+      /ADD CONSTRAINT/,
     );
   });
 });

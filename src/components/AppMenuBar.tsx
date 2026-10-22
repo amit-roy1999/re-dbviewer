@@ -358,9 +358,14 @@ export function AppMenuBar({
             [
               ["eer", "EER Diagram / Forward Engineer…"],
               ["compare", "Schema Compare…"],
+              ["dataCompare", "Data Compare…"],
+              ["schemaSync", "Schema Sync…"],
               ["migrate", "Migration Wizard…"],
               ["fakeData", "Fake Data Factory…"],
               ["visualize", "Visualize Data…"],
+              ["vqb", "Visual Query Builder…"],
+              ["pivot", "Pivot / Crosstab…"],
+              ["notebook", "Query Notebook…"],
             ] as const
           ).map(([id, label]) => (
             <DropdownMenuItem

@@ -8,11 +8,14 @@ export type AdminViewId =
   | "variables"
   | "dataExport"
   | "dataImport"
+  | "pgCatalog"
   | "startupShutdown"
   | "logs"
   | "optionsFile"
   | "perfDashboard"
   | "perfReports"
+  | "waitEvents"
+  | "replication"
   | "perfSchemaSetup";
 
 export type AdminNavGroup = {
@@ -33,6 +36,7 @@ export const ADMIN_NAV: AdminNavGroup[] = [
       { id: "variables", label: "Status and System Variables" },
       { id: "dataExport", label: "Data Export" },
       { id: "dataImport", label: "Data Import/Restore" },
+      { id: "pgCatalog", label: "PG Extensions / Sequences / Matviews" },
     ],
   },
   {
@@ -50,6 +54,8 @@ export const ADMIN_NAV: AdminNavGroup[] = [
     items: [
       { id: "perfDashboard", label: "Dashboard" },
       { id: "perfReports", label: "Performance Reports" },
+      { id: "waitEvents", label: "Wait Events" },
+      { id: "replication", label: "Replication / Topology" },
       { id: "perfSchemaSetup", label: "Performance Schema Setup" },
     ],
   },

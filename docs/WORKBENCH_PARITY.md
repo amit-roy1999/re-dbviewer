@@ -20,8 +20,8 @@ Source: MySQL Workbench Manual chs 3–10 vs re-dbviewer on `feature/workbench-p
 | ID | Feature | Status |
 |----|---------|--------|
 | B1 | Multi live connections | done |
-| B2 | SSH tunnel UI | partial |
-| B3 | SSL file pickers | partial |
+| B2 | SSH tunnel UI (+ agent preference) | done |
+| B3 | SSL file pickers (Browse) | done |
 | B4 | Socket/pipe | done |
 | B5 | OS keyring + encrypted vault fallback | done |
 | B6 | Connection color on tabs — left stripe on each connection tab, top bar when active | done |
@@ -36,7 +36,7 @@ Source: MySQL Workbench Manual chs 3–10 vs re-dbviewer on `feature/workbench-p
 | C1 | Context Help panel | done |
 | C2 | Multi-statement run in editor — Run script, continue on error | done |
 | C3 | Multi-result tabs | done |
-| C4 | Cancel query — Stop ignores late result; server query is not killed | partial |
+| C4 | Cancel query — Stop ignores late result + server cancel (interrupt / KILL QUERY / pg_cancel_backend) | done |
 | C5 | Transaction toolbar | done |
 | C6 | JSON cell viewer — right-click a JSON object/array cell → View as JSON | done |
 | C7 | Pin/compare results — pin one result; compare column names + row-count diff | done |
@@ -138,17 +138,25 @@ Workbench-style **Administration** mode: click the connection name in the Worksp
 | ID | Shipped | Limits |
 |----|---------|--------|
 | B1 | Rust `SessionState` is a `HashMap<connection id, session>` plus an "active" id. `open_connection` adds a session and activates it; `set_active_connection`, `list_open_connections`, `close_connection(connectionId?)` added. `list_schema`, `describe_table`, `run_sql`, `run_sql_script`, `export_table_sql` take an optional `connectionId` (default = active). App shows a tab strip; each connection keeps its own mounted `Workspace`. | Other workspace commands (preview, import, CSV export) still act on the active connection only; hidden tabs must not issue them. |
-| B2 | Form fields `sshHost/Port/User/KeyPath`; tunnel = system `ssh -N -L` (key auth, `BatchMode`), local port picked automatically, killed on disconnect. Used by open and Test. | Needs `ssh` on PATH; no password / agent-prompt auth; host-key policy `accept-new`; not tested against a real bastion in CI. |
+| B2 | Form fields `sshHost/Port/User/KeyPath` + Browse + `sshUseAgent`; tunnel = system `ssh -N -L` (BatchMode), local port auto, killed on disconnect. | Needs `ssh` on PATH; no interactive password prompt; host-key `accept-new`. |
 | B3 | `sslMode`, `sslCa`, `sslCert`, `sslKey`. Postgres: TLS via native-tls with CA + client cert/key (PEM). MySQL/MariaDB: TLS with optional CA (`verify-*` modes verify). | MySQL client cert/key are stored but not used (driver needs PKCS#12). SQL Server ignores SSL fields. `require` does not verify the server cert. |
 | B4 | `socketPath`: MySQL socket file / Postgres socket directory. | Unix only; ignored when an SSH tunnel is set. |
 | B5 | Passwords go to the OS keyring (`keyring` crate, service `re-dbviewer`, key = connection id) when available; else encrypted app vault (Argon2id + AES-256-GCM). Config JSON keeps `passwordInKeyring` / `passwordInVault` flags only — **no plaintext**. Home **Store in Vault** checkbox (Workbench-style); unlock dialog when vault is needed. | Vault master password is local-only and session-scoped after unlock. Legacy plaintext migrates on list/save when keyring or unlocked vault can accept it. Copy URL may still include a hydrated session password. |
 | B7 | Card menu **Duplicate** (`duplicate_connection`, name + " (copy)") and **Copy URL**. | — |
 | F1–F4, G3 | **Tools → Server Admin** (MySQL/MariaDB/Postgres): Processes (+Kill), Status, Variables, Users (+Grants, New user), Performance (largest tables, MySQL I/O waits / PG `pg_stat_user_tables`); all tables are searchable. | Logs tab is best-effort (MySQL 8.0.22+ `error_log`; elsewhere variables / settings only). No revoke. Kill / create / drop user need the DDL permission on the connection. Top-statements reports need `performance_schema` (MySQL) or `pg_stat_statements` (PG). |
 | G1 | **Visual Explain** SVG diagram (Workbench-style): color-coded access boxes, join diamonds, cost/rows badges; Postgres JSON, MySQL tabular, SQLite QUERY PLAN. | Not pixel-identical to WB; layout is top-down tree. |
-| H1/H2 | **Tools → EER Diagram**: reverse engineer tables + FKs into SVG boxes with relation lines. | Read-only, auto layout, max 80 tables. |
+| H1/H2 | **Tools → EER Diagram**: reverse engineer tables + FKs into SVG boxes with relation lines; drag layout; add/remove FK → pending ALTER DDL. | Max 80 tables; SQLite FK alter is comment-only; apply is via query tab (not auto-run). |
 | H3 | Forward engineer: CREATE TABLE / FK / index script into a query tab (or clipboard). | Types are emitted as reported by the source engine (no cross-dialect mapping; see I2 for migration). |
 | H4 | **Tools → Schema Compare**: current schema vs other schema / other connection / `.sql` file; lists missing tables, missing columns, type differences. | Index / FK *names* are compared only for schema / connection sides (not `.sql` files, not index columns); SQL-file parsing is heuristic. |
 | I1 | **Tools → Migration Wizard**: pick source + target saved connections, select tables, create tables (source DDL) and copy data in batches. | Cross-engine: only mapped types, NOT NULL and PK are created (no defaults / auto-increment / indexes / FKs); progress is a text line, not a bar; tables are created unqualified in the target default schema. |
+
+### Beyond Workbench (shipped)
+
+| Feature | Notes |
+|---------|--------|
+| **Tools → Visualize Data** | Relation-query → Vega-Lite charts (dialog + workspace tab); `.rdbviz.json` recipes; export `.vl.json`. Not a Workbench parity ID. |
+| **Tools → Data Compare** | Row-level only-in-A / only-in-B / value diffs by key columns (capped rows). Not a Workbench parity ID. |
+| **Fake Data Factory** | Synthetic seed tool (see USER_GUIDE / vision doc). |
 
 ## Docs crawl note (2026-10-17)
 
@@ -161,7 +169,7 @@ Nested Workbench manual URLs consulted for this gap pass:
 
 Actionable upgrades this pass (all shipped → `done`): A4, B6, C13, C14, D3, D5, D11, D12, E1, E6, F4, G2, G3, H4.
 
-Hard-limit partials left documented only: B2, B3, C4, H1, I1.
+Hard-limit partials left documented only: H1, I1.
 
 ## Already done (Phases 1–3 baseline)
 

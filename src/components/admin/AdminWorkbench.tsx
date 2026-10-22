@@ -23,6 +23,8 @@ import {
   isMysqlFamily,
   kvMap,
   queryTypeBucket,
+  revokeAllSql,
+  roleTreeSql,
   type AdminTab,
   type QueryTypeFilter,
 } from "@/lib/adminSql";
@@ -149,6 +151,104 @@ function StubView({
             <p className="mt-1 text-muted-foreground">{reason}</p>
           </AlertDescription>
         </Alert>
+      </div>
+    </div>
+  );
+}
+
+/** PostgreSQL: installed extensions, sequences, and materialized views. */
+function PgCatalogView({ connection }: { connection: SavedConnection }) {
+  const [tab, setTab] = useState<"extensions" | "sequences" | "matviews">(
+    "extensions",
+  );
+  const [result, setResult] = useState<QueryResult | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const sql =
+    tab === "extensions"
+      ? `SELECT e.extname AS name, e.extversion AS version, n.nspname AS schema,
+                obj_description(e.oid, 'pg_extension') AS description
+         FROM pg_extension e
+         JOIN pg_namespace n ON n.oid = e.extnamespace
+         ORDER BY e.extname`
+      : tab === "sequences"
+        ? `SELECT n.nspname AS schema, c.relname AS name,
+                  pg_catalog.pg_get_userbyid(c.relowner) AS owner
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE c.relkind = 'S'
+             AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+           ORDER BY 1, 2`
+        : `SELECT n.nspname AS schema, c.relname AS name,
+                  pg_catalog.pg_get_userbyid(c.relowner) AS owner
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE c.relkind = 'm'
+             AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+           ORDER BY 1, 2`;
+
+  const load = useCallback(async () => {
+    if (connection.engine !== "postgres") return;
+    setBusy(true);
+    setError("");
+    try {
+      setResult(await runSql(sql, connection.id));
+    } catch (e) {
+      setResult(null);
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [connection.engine, connection.id, sql]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (connection.engine !== "postgres") {
+    return (
+      <StubView
+        title="PG Extensions / Sequences / Matviews"
+        reason="This browser is PostgreSQL-only. Sequences and materialized views also appear in the Entities tree on Postgres connections."
+      />
+    );
+  }
+
+  return (
+    <div data-testid="admin-pg-catalog" className="flex h-full min-h-0 flex-col">
+      <PanelHeader title="PG Extensions / Sequences / Matviews">
+        <div className="flex gap-1">
+          {(
+            [
+              ["extensions", "Extensions"],
+              ["sequences", "Sequences"],
+              ["matviews", "Matviews"],
+            ] as const
+          ).map(([id, label]) => (
+            <Button
+              key={id}
+              size="xs"
+              variant={tab === id ? "default" : "outline"}
+              data-testid={`pg-catalog-tab-${id}`}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </Button>
+          ))}
+          <Button size="xs" variant="outline" disabled={busy} onClick={() => void load()}>
+            <RefreshCw className="size-3.5" />
+            Refresh
+          </Button>
+        </div>
+      </PanelHeader>
+      {error ? (
+        <Alert variant="destructive" className="m-2">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-auto p-2">
+        <AdminTable result={result} />
       </div>
     </div>
   );
@@ -573,6 +673,7 @@ function UsersView({ connection }: { connection: SavedConnection }) {
   const { results, errors, busy, load } = useAdminQuery(engine, connection.id, "users");
   const [msg, setMsg] = useState("");
   const [grants, setGrants] = useState<{ who: string; result: QueryResult } | null>(null);
+  const [roleTree, setRoleTree] = useState<QueryResult | null>(null);
   const [newUser, setNewUser] = useState<{
     user: string;
     host: string;
@@ -634,6 +735,33 @@ function UsersView({ connection }: { connection: SavedConnection }) {
     }
   }
 
+  async function revokeAll(row: unknown[]) {
+    const user = String(row[0]);
+    const host = isMysqlFamily(engine) ? String(row[1]) : undefined;
+    const who = host ? `${user}@${host}` : user;
+    const ok = await confirmNative(`REVOKE ALL privileges from ${who}?`, {
+      title: "Revoke privileges",
+      kind: "warning",
+    }).catch(() => window.confirm(`REVOKE ALL from ${who}?`));
+    if (!ok) return;
+    try {
+      await runScript(revokeAllSql(engine, user, host), connection.id);
+      setMsg(`Revoked privileges from ${who}.`);
+      await showGrants(row);
+      await load();
+    } catch (e) {
+      setMsg(String(e));
+    }
+  }
+
+  async function loadRoleTree() {
+    try {
+      setRoleTree(await runSql(roleTreeSql(engine), connection.id));
+    } catch (e) {
+      setMsg(String(e));
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PanelHeader
@@ -641,6 +769,9 @@ function UsersView({ connection }: { connection: SavedConnection }) {
         busy={busy}
         onRefresh={() => void load()}
       >
+        <Button size="sm" variant="outline" onClick={() => void loadRoleTree()}>
+          Role tree
+        </Button>
         <Button
           size="sm"
           variant="outline"
@@ -723,6 +854,14 @@ function UsersView({ connection }: { connection: SavedConnection }) {
                 </Button>
                 <Button
                   size="xs"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void revokeAll(row)}
+                >
+                  Revoke all
+                </Button>
+                <Button
+                  size="xs"
                   variant="destructive"
                   disabled={busy}
                   onClick={() => void dropUser(row)}
@@ -740,6 +879,17 @@ function UsersView({ connection }: { connection: SavedConnection }) {
               Grants for {grants.who}
             </h3>
             <AdminTable result={grants.result} emptyText="No grants." />
+          </div>
+        ) : null}
+        {roleTree ? (
+          <div
+            data-testid="admin-role-tree"
+            className="flex max-h-56 shrink-0 flex-col gap-1"
+          >
+            <h3 className="text-xs font-medium text-muted-foreground">
+              Role / privilege tree
+            </h3>
+            <AdminTable result={roleTree} emptyText="No memberships." />
           </div>
         ) : null}
       </div>
@@ -823,6 +973,96 @@ function LogsView({ connection }: { connection: SavedConnection }) {
               </Alert>
             ) : (
               <AdminTable result={r} />
+            )}
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WaitEventsView({ connection }: { connection: SavedConnection }) {
+  const { results, errors, busy, load } = useAdminQuery(
+    connection.engine,
+    connection.id,
+    "waitEvents",
+  );
+  const my = isMysqlFamily(connection.engine);
+  const labels = my
+    ? ["Wait events (global)", "Table I/O waits"]
+    : ["Wait event counts", "Sessions currently waiting"];
+  return (
+    <div data-testid="admin-wait-events" className="flex h-full min-h-0 flex-col">
+      <PanelHeader
+        title="Wait Events"
+        busy={busy}
+        onRefresh={() => void load()}
+      />
+      <div className="min-h-0 flex-1 space-y-4 overflow-auto p-3">
+        {results.map((r, i) => (
+          <section key={i} className="space-y-1.5">
+            <h3 className="text-xs font-medium text-muted-foreground">
+              {labels[i]}
+            </h3>
+            {errors[i] ? (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  {errors[i]}
+                  {my
+                    ? " — needs performance_schema."
+                    : " — needs access to pg_stat_activity."}
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <AdminTable result={r} />
+            )}
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReplicationView({ connection }: { connection: SavedConnection }) {
+  const { results, errors, busy, load } = useAdminQuery(
+    connection.engine,
+    connection.id,
+    "replication",
+  );
+  const my = isMysqlFamily(connection.engine);
+  const labels = my
+    ? ["Replica status", "Master status", "Replication connection status"]
+    : ["Streaming replicas", "Replication slots", "Recovery / LSN"];
+  return (
+    <div
+      data-testid="admin-replication"
+      className="flex h-full min-h-0 flex-col"
+    >
+      <PanelHeader
+        title="Replication / Topology"
+        busy={busy}
+        onRefresh={() => void load()}
+      />
+      <div className="min-h-0 flex-1 space-y-4 overflow-auto p-3">
+        <p className="text-xs text-muted-foreground">
+          Read-only view of replication topology when the server exposes it.
+        </p>
+        {results.map((r, i) => (
+          <section key={i} className="space-y-1.5">
+            <h3 className="text-xs font-medium text-muted-foreground">
+              {labels[i]}
+            </h3>
+            {errors[i] ? (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  {errors[i]}
+                  {my
+                    ? " — replica/master privileges may be required."
+                    : " — needs pg_monitor / replication visibility."}
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <AdminTable result={r} emptyText="No rows (not a replica / no peers)." />
             )}
           </section>
         ))}
@@ -1041,6 +1281,8 @@ function AdminViewBody({
       return <DataExportView actions={actions} />;
     case "dataImport":
       return <DataImportView actions={actions} />;
+    case "pgCatalog":
+      return <PgCatalogView connection={connection} />;
     case "startupShutdown":
       return (
         <StubView
@@ -1061,6 +1303,10 @@ function AdminViewBody({
       return <PerfDashboardView connection={connection} />;
     case "perfReports":
       return <PerfReportsView connection={connection} />;
+    case "waitEvents":
+      return <WaitEventsView connection={connection} />;
+    case "replication":
+      return <ReplicationView connection={connection} />;
     case "perfSchemaSetup":
       return <PerfSchemaSetupView connection={connection} />;
   }

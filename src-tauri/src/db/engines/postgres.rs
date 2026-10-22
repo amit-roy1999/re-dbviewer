@@ -2,8 +2,9 @@ use tokio_postgres::{NoTls, Row};
 
 use super::super::config::ConnectionConfig;
 use super::super::types::{
-    build_filter_sort, is_result_query, quote_ident, split_table, ColumnInfo, ForeignKeyInfo,
-    IndexInfo, PlaceholderStyle, QueryResult, SchemaNode, TableDetails, TableFilter, TableSort,
+    build_filter_sort, is_result_query, quote_ident, split_table, CheckConstraintInfo, ColumnInfo,
+    ForeignKeyInfo, IndexInfo, PlaceholderStyle, QueryResult, SchemaNode, TableDetails,
+    TableFilter, TableSort,
 };
 
 fn conn_str(config: &ConnectionConfig) -> String {
@@ -75,12 +76,25 @@ pub async fn open(config: &ConnectionConfig) -> Result<tokio_postgres::Client, S
 }
 
 pub async fn list_schema(client: &tokio_postgres::Client) -> Result<Vec<SchemaNode>, String> {
+    // Include tables, views, materialized views, and sequences (relkind r/p/v/m/S).
     let rows = client
         .query(
-            "SELECT table_schema, table_name, table_type
-             FROM information_schema.tables
-             WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-             ORDER BY table_schema, table_name",
+            "SELECT n.nspname, c.relname,
+                    CASE c.relkind
+                      WHEN 'r' THEN 'table'
+                      WHEN 'p' THEN 'table'
+                      WHEN 'v' THEN 'view'
+                      WHEN 'm' THEN 'matview'
+                      WHEN 'S' THEN 'sequence'
+                      ELSE 'other'
+                    END AS kind
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S')
+               AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+             ORDER BY n.nspname, c.relname",
             &[],
         )
         .await
@@ -90,13 +104,7 @@ pub async fn list_schema(client: &tokio_postgres::Client) -> Result<Vec<SchemaNo
     for row in rows {
         let schema: String = row.get(0);
         let name: String = row.get(1);
-        let ttype: String = row.get(2);
-        let kind = if ttype.contains("VIEW") {
-            "view"
-        } else {
-            "table"
-        }
-        .to_string();
+        let kind: String = row.get(2);
         if let Some(s) = schemas.iter_mut().find(|s| s.name == schema) {
             s.children.push(SchemaNode {
                 name,
@@ -165,7 +173,8 @@ pub async fn describe_table(
                         AND tc.table_schema = c.table_schema
                         AND tc.table_name = c.table_name
                         AND kcu.column_name = c.column_name
-                    ) AS is_pk
+                    ) AS is_pk,
+                    CASE WHEN c.is_generated = 'ALWAYS' THEN c.generation_expression ELSE NULL END
              FROM information_schema.columns c
              WHERE c.table_schema = $1 AND c.table_name = $2
              ORDER BY c.ordinal_position",
@@ -182,6 +191,7 @@ pub async fn describe_table(
             nullable: r.get::<_, String>(2).eq_ignore_ascii_case("YES"),
             default_value: r.get(3),
             is_pk: r.get(4),
+            generated: r.get(5),
         })
         .collect();
 
@@ -251,10 +261,32 @@ pub async fn describe_table(
         }
     }
 
+    let check_rows = client
+        .query(
+            "SELECT con.conname, pg_get_constraintdef(con.oid)
+             FROM pg_constraint con
+             JOIN pg_class rel ON rel.oid = con.conrelid
+             JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+             WHERE con.contype = 'c'
+               AND nsp.nspname = $1 AND rel.relname = $2
+             ORDER BY con.conname",
+            &[&schema, &name],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let check_constraints = check_rows
+        .iter()
+        .map(|r| CheckConstraintInfo {
+            name: r.get(0),
+            definition: r.get(1),
+        })
+        .collect();
+
     Ok(TableDetails {
         columns,
         foreign_keys,
         indexes,
+        check_constraints,
     })
 }
 

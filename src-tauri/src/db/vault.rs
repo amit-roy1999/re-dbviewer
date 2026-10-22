@@ -308,4 +308,25 @@ mod tests {
         assert!(v.unlock("wrong").is_err());
         let _ = std::fs::remove_file(&path);
     }
+
+    #[test]
+    fn empty_master_rejected_and_persists_across_reopen() {
+        let path = tmp_vault();
+        let _ = std::fs::remove_file(&path);
+        let mut v = PasswordVault::open(&path);
+        assert!(v.create("").is_err());
+        assert!(v.unlock_or_create("   ").is_err());
+        v.create("persist-me").unwrap();
+        v.set("c2", "secret").unwrap();
+        drop(v);
+
+        let mut v2 = PasswordVault::open(&path);
+        let st = v2.status(false);
+        assert!(st.exists);
+        assert!(!st.unlocked);
+        assert!(!st.keyring_available);
+        v2.unlock("persist-me").unwrap();
+        assert_eq!(v2.get("c2").unwrap().as_deref(), Some("secret"));
+        let _ = std::fs::remove_file(&path);
+    }
 }

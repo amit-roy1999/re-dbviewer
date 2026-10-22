@@ -21,5 +21,7 @@ describe("adminNav", () => {
     expect(ids).toContain("queryMonitor");
     expect(ids).toContain("optionsFile");
     expect(ids).toContain("perfSchemaSetup");
+    expect(ids).toContain("pgCatalog");
+    expect(ids).toContain("replication");
   });
 });

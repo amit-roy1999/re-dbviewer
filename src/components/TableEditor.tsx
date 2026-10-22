@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type {
   EditableColumn,
   EditableFk,
@@ -12,6 +12,7 @@ import {
 } from "@/lib/tableDdl";
 import { cn } from "@/lib/utils";
 import { typeSelectOptions } from "@/lib/columnTypes";
+import { formatDiff, pendingDdlDiff } from "@/lib/pendingDdlDiff";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Trash2 } from "lucide-react";
@@ -31,6 +32,8 @@ type Props = {
   advanced?: TableAdvanced;
   onAdvancedChange?: (v: TableAdvanced) => void;
   ddlPreview: string;
+  /** Snapshot of DDL when the editor opened — for review diff. */
+  baselineDdl?: string;
   canApply: boolean;
   busy?: boolean;
   onApply: () => void;
@@ -51,12 +54,18 @@ export function TableEditor({
   advanced,
   onAdvancedChange,
   ddlPreview,
+  baselineDdl = "",
   canApply,
   busy,
   onApply,
   onOpenInQuery,
 }: Props) {
   const [showDdl, setShowDdl] = useState(true);
+  const [showDiff, setShowDiff] = useState(false);
+  const ddlDiff = useMemo(
+    () => formatDiff(pendingDdlDiff(baselineDdl, ddlPreview)),
+    [baselineDdl, ddlPreview],
+  );
   const [section, setSection] = useState<"columns" | "indexes" | "fks" | "advanced">(
     "columns",
   );
@@ -418,6 +427,22 @@ export function TableEditor({
         {showDdl ? (
           <pre className="max-h-36 overflow-auto border-t border-border bg-muted/30 px-3 py-2 font-mono text-[11px] whitespace-pre-wrap">
             {ddlPreview || "-- empty"}
+          </pre>
+        ) : null}
+        <button
+          type="button"
+          data-testid="table-editor-ddl-diff"
+          className="flex h-7 w-full items-center px-3 text-[11px] text-muted-foreground hover:bg-muted/40"
+          onClick={() => setShowDiff((v) => !v)}
+        >
+          Review DDL diff {showDiff ? "▾" : "▸"}
+        </button>
+        {showDiff ? (
+          <pre
+            data-testid="table-editor-ddl-diff-body"
+            className="max-h-36 overflow-auto border-t border-border bg-muted/30 px-3 py-2 font-mono text-[11px] whitespace-pre-wrap"
+          >
+            {ddlDiff || " (no changes)"}
           </pre>
         ) : null}
       </div>

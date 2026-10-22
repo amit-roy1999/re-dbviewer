@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   formatResult,
+  resultToHtml,
   resultToInserts,
   resultToJson,
   resultToMarkdown,
+  resultToXml,
 } from "@/lib/resultExport";
 import { sampleResult } from "./fixtures";
 
@@ -33,5 +35,12 @@ describe("resultExport", () => {
     expect(
       formatResult("json", sampleResult, "t", "sqlite", csvFn),
     ).toContain("Ada");
+  });
+
+  it("html and xml", () => {
+    expect(resultToHtml(sampleResult)).toMatch(/<table>/);
+    expect(resultToHtml(sampleResult)).toContain("<th>id</th>");
+    expect(resultToXml(sampleResult)).toMatch(/<\?xml/);
+    expect(resultToXml(sampleResult)).toContain("<name>Ada</name>");
   });
 });

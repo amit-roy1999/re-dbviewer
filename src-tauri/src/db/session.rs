@@ -28,11 +28,24 @@ struct OpenSession {
     _tunnel: Option<Tunnel>,
 }
 
+/// How to interrupt a running statement without waiting on the session mutex.
+enum CancelToken {
+    Sqlite(rusqlite::InterruptHandle),
+    /// Separate short-lived connection runs KILL / pg_cancel_backend / KILL session.
+    Server {
+        engine: String,
+        backend_id: u32,
+        config: ConnectionConfig,
+    },
+}
+
 /// Several open connections keyed by saved-connection id; one is "active" and is what
 /// commands without an explicit `connection_id` operate on.
 pub struct SessionState {
     sessions: Mutex<HashMap<String, Arc<Mutex<OpenSession>>>>,
     active: Mutex<Option<String>>,
+    /// Per-connection cancel token while a query is in flight.
+    running: Mutex<HashMap<String, CancelToken>>,
 }
 
 impl SessionState {
@@ -40,6 +53,7 @@ impl SessionState {
         Self {
             sessions: Mutex::new(HashMap::new()),
             active: Mutex::new(None),
+            running: Mutex::new(HashMap::new()),
         }
     }
 
@@ -102,20 +116,24 @@ impl SessionState {
             .unwrap_or_default()
     }
 
-    fn with_target<T>(
-        &self,
-        id: Option<&str>,
-        f: impl FnOnce(&SavedConnection, &mut LiveDb) -> Result<T, String>,
-    ) -> Result<T, String> {
-        let key = match id {
-            Some(i) => i.to_string(),
+    fn resolve_key(&self, id: Option<&str>) -> Result<String, String> {
+        match id {
+            Some(i) => Ok(i.to_string()),
             None => self
                 .active
                 .lock()
                 .map_err(|e| e.to_string())?
                 .clone()
-                .ok_or_else(|| "no connection open".to_string())?,
-        };
+                .ok_or_else(|| "no connection open".to_string()),
+        }
+    }
+
+    fn with_target<T>(
+        &self,
+        id: Option<&str>,
+        f: impl FnOnce(&SavedConnection, &mut LiveDb) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let key = self.resolve_key(id)?;
         let arc = self
             .sessions
             .lock()
@@ -126,6 +144,37 @@ impl SessionState {
         let mut session = arc.lock().map_err(|e| e.to_string())?;
         let OpenSession { connection, db, .. } = &mut *session;
         f(connection, db)
+    }
+
+    /// Like `with_target`, but registers a cancel token for the duration of `f`.
+    fn with_target_cancellable<T>(
+        &self,
+        id: Option<&str>,
+        f: impl FnOnce(&SavedConnection, &mut LiveDb) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let key = self.resolve_key(id)?;
+        let arc = self
+            .sessions
+            .lock()
+            .map_err(|e| e.to_string())?
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| format!("connection {key} is not open"))?;
+        let mut session = arc.lock().map_err(|e| e.to_string())?;
+        let OpenSession {
+            connection, db, ..
+        } = &mut *session;
+        let token = begin_cancel_token(connection, db)?;
+        {
+            let mut running = self.running.lock().map_err(|e| e.to_string())?;
+            running.insert(key.clone(), token);
+        }
+        let result = f(connection, db);
+        {
+            let mut running = self.running.lock().map_err(|e| e.to_string())?;
+            running.remove(&key);
+        }
+        result
     }
 
     fn with_mut<T>(
@@ -170,10 +219,45 @@ impl SessionState {
         if trimmed.is_empty() {
             return Err("empty SQL".into());
         }
-        self.with_target(id, |conn, db| {
+        self.with_target_cancellable(id, |conn, db| {
             assert_sql_allowed(&conn.permissions, trimmed)?;
             run_sql_inner(db, trimmed)
         })
+    }
+
+    /// Best-effort cancel of the in-flight query on `id` (or active). Safe to call from
+    /// another thread while `run_sql` holds the session lock.
+    pub fn cancel_query_on(&self, id: Option<&str>) -> Result<String, String> {
+        let key = match id {
+            Some(i) => i.to_string(),
+            None => self
+                .active
+                .lock()
+                .map_err(|e| e.to_string())?
+                .clone()
+                .ok_or_else(|| "no connection open".to_string())?,
+        };
+        let running = self.running.lock().map_err(|e| e.to_string())?;
+        let Some(token) = running.get(&key) else {
+            return Ok("No running query to cancel".into());
+        };
+        match token {
+            CancelToken::Sqlite(handle) => {
+                handle.interrupt();
+                Ok("Interrupted SQLite statement".into())
+            }
+            CancelToken::Server {
+                engine,
+                backend_id,
+                config,
+            } => {
+                let engine = engine.clone();
+                let backend_id = *backend_id;
+                let config = config.clone();
+                drop(running);
+                cancel_via_side_connection(&engine, backend_id, &config)
+            }
+        }
     }
 
     pub fn export_table_csv(
@@ -780,6 +864,88 @@ fn run_sql_inner(db: &mut LiveDb, sql: &str) -> Result<QueryResult, String> {
     }
 }
 
+fn begin_cancel_token(
+    connection: &SavedConnection,
+    db: &mut LiveDb,
+) -> Result<CancelToken, String> {
+    match db {
+        LiveDb::Sqlite(c) => Ok(CancelToken::Sqlite(c.get_interrupt_handle())),
+        LiveDb::Postgres(c) => {
+            let row = block_on(c.query_one("SELECT pg_backend_pid()", &[]))
+                .map_err(|e| e.to_string())?;
+            let pid: i32 = row.get(0);
+            Ok(CancelToken::Server {
+                engine: connection.engine.clone(),
+                backend_id: pid as u32,
+                config: connection.config.clone(),
+            })
+        }
+        LiveDb::Mysql(c) => {
+            let id = block_on(async {
+                use mysql_async::prelude::Queryable;
+                let row: Option<(u32,)> = c
+                    .query_first("SELECT CONNECTION_ID()")
+                    .await
+                    .map_err(|e| e.to_string())?;
+                row.map(|r| r.0)
+                    .ok_or_else(|| "CONNECTION_ID() returned no row".to_string())
+            })?;
+            Ok(CancelToken::Server {
+                engine: connection.engine.clone(),
+                backend_id: id,
+                config: connection.config.clone(),
+            })
+        }
+        LiveDb::Mssql(c) => {
+            let id = block_on(mssql::session_spid(c))?;
+            Ok(CancelToken::Server {
+                engine: connection.engine.clone(),
+                backend_id: id,
+                config: connection.config.clone(),
+            })
+        }
+    }
+}
+
+fn cancel_via_side_connection(
+    engine: &str,
+    backend_id: u32,
+    config: &ConnectionConfig,
+) -> Result<String, String> {
+    let (cfg, _tunnel) = maybe_tunnel(engine, config)?;
+    match engine {
+        "postgres" => {
+            let client = block_on(postgres::open(&cfg))?;
+            let sql = format!("SELECT pg_cancel_backend({backend_id})");
+            block_on(client.execute(&sql, &[])).map_err(|e| e.to_string())?;
+            Ok(format!("Sent pg_cancel_backend({backend_id})"))
+        }
+        "mysql" | "mariadb" => {
+            let mut conn = block_on(mysql::open(&cfg))?;
+            block_on(async {
+                use mysql_async::prelude::Queryable;
+                conn.query_drop(format!("KILL QUERY {backend_id}"))
+                    .await
+                    .map_err(|e| e.to_string())
+            })?;
+            Ok(format!("Sent KILL QUERY {backend_id}"))
+        }
+        "mssql" => {
+            // KILL ends the whole session (best-effort); no per-query cancel API.
+            let mut client = block_on(mssql::connect(&cfg))?;
+            block_on(async {
+                client
+                    .simple_query(format!("KILL {backend_id}"))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok::<(), String>(())
+            })?;
+            Ok(format!("Sent KILL {backend_id} (session)"))
+        }
+        other => Err(format!("cancel not supported for engine {other}")),
+    }
+}
+
 fn fetch_all_inner(
     db: &mut LiveDb,
     table: &str,
@@ -856,6 +1022,57 @@ mod tests {
             config,
             permissions: perms,
         }
+    }
+
+    #[test]
+    fn sqlite_cancel_interrupts_long_query() {
+        let dir = std::env::temp_dir().join(format!("re-dbviewer-cancel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.sqlite");
+        {
+            let c = rusqlite::Connection::open(&path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE t(x INTEGER);
+                 INSERT INTO t SELECT 1;",
+            )
+            .unwrap();
+            // Recursive CTE that runs long enough to interrupt.
+            let _ = c;
+        }
+        let session = Arc::new(SessionState::new());
+        session
+            .open(fake_conn(
+                "sqlite",
+                ConnectionConfig::sqlite_path(path.to_string_lossy()),
+                Permissions::default(),
+            ))
+            .unwrap();
+
+        let sess = Arc::clone(&session);
+        let handle = std::thread::spawn(move || {
+            sess.run_sql_on(
+                None,
+                "WITH RECURSIVE r(n) AS (
+                   SELECT 1
+                   UNION ALL
+                   SELECT n+1 FROM r WHERE n < 5000000
+                 )
+                 SELECT COUNT(*) FROM r",
+            )
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let msg = session.cancel_query_on(None).unwrap();
+        assert!(msg.to_lowercase().contains("interrupt"), "{msg}");
+        let err = handle.join().unwrap().unwrap_err();
+        assert!(
+            err.to_lowercase().contains("interrupt")
+                || err.to_lowercase().contains("cancelled")
+                || err.contains("SQLITE_INTERRUPT")
+                || err.to_lowercase().contains("abort"),
+            "unexpected error: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

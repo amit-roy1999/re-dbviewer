@@ -28,6 +28,13 @@ describe("appCommands", () => {
     expect(all.some((c) => c.id === "file.prefs")).toBe(true);
     expect(all.some((c) => c.id === "admin.queryMonitor")).toBe(true);
     expect(all.some((c) => c.id === "tools.visualize")).toBe(true);
+    expect(all.some((c) => c.id === "tools.vqb")).toBe(true);
+    expect(all.some((c) => c.id === "tools.data-compare")).toBe(true);
+    expect(all.some((c) => c.id === "tools.schema-sync")).toBe(true);
+    expect(all.some((c) => c.id === "tools.pivot")).toBe(true);
+    expect(all.some((c) => c.id === "tools.notebook")).toBe(true);
+    expect(all.some((c) => c.id === "tools.ai-sql")).toBe(true);
+    expect(all.some((c) => c.id === "file.git-add-sql")).toBe(true);
   });
 
   it("gates connected and adminEngine commands", () => {

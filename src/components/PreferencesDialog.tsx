@@ -147,6 +147,35 @@ export function PreferencesDialog({ open, onClose, onSaved }: Props) {
             />
             High contrast
           </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={!!prefs.aiAssistLocal}
+              onChange={(e) =>
+                setPrefs((p) => ({ ...p, aiAssistLocal: e.target.checked }))
+              }
+            />
+            Local AI SQL assist (templates only, no network)
+          </label>
+          <label className="flex items-center justify-between gap-3">
+            <span>Backup reminder (hours, 0=off)</span>
+            <Input
+              type="number"
+              className="h-7 w-20"
+              min={0}
+              max={720}
+              value={prefs.backupIntervalHours ?? 0}
+              onChange={(e) =>
+                setPrefs((p) => ({
+                  ...p,
+                  backupIntervalHours: Math.max(
+                    0,
+                    Number(e.target.value) || 0,
+                  ),
+                }))
+              }
+            />
+          </label>
           <div className="border-t border-border pt-3">
             <div className="mb-1 font-medium text-foreground">Diagnostics</div>
             <p className="mb-2 text-[11px] text-muted-foreground">

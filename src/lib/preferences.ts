@@ -9,6 +9,10 @@ export type AppPreferences = {
   highContrast: boolean;
   /** Whole-app UI zoom percent (50–200). Ctrl+Plus / Ctrl+Minus. */
   uiZoom: number;
+  /** Local template SQL assist (no network). */
+  aiAssistLocal: boolean;
+  /** Hours between dump reminders for the open connection (0 = off). */
+  backupIntervalHours: number;
 };
 
 const KEY = "re-dbviewer:preferences";
@@ -21,6 +25,8 @@ export const DEFAULT_PREFS: AppPreferences = {
   confirmDestructive: true,
   highContrast: false,
   uiZoom: 100,
+  aiAssistLocal: false,
+  backupIntervalHours: 0,
 };
 
 export const UI_ZOOM_MIN = 50;

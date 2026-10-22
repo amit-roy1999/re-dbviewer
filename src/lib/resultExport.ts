@@ -1,6 +1,13 @@
 import type { QueryResult } from "@/types";
 
-export type ExportFormat = "csv" | "json" | "markdown" | "inserts";
+export type ExportFormat =
+  | "csv"
+  | "json"
+  | "markdown"
+  | "inserts"
+  | "xlsx"
+  | "html"
+  | "xml";
 
 export const EXPORT_FORMATS: {
   id: ExportFormat;
@@ -8,10 +15,56 @@ export const EXPORT_FORMATS: {
   ext: string;
 }[] = [
   { id: "csv", label: "CSV", ext: "csv" },
+  { id: "xlsx", label: "Excel", ext: "xlsx" },
   { id: "json", label: "JSON", ext: "json" },
   { id: "markdown", label: "Markdown", ext: "md" },
+  { id: "html", label: "HTML table", ext: "html" },
+  { id: "xml", label: "XML", ext: "xml" },
   { id: "inserts", label: "SQL INSERTs", ext: "sql" },
 ];
+
+function escXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function cellStr(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  return typeof v === "object" ? JSON.stringify(v) : String(v);
+}
+
+export function resultToHtml(result: QueryResult): string {
+  const th = result.columns
+    .map((c) => `<th>${escXml(c)}</th>`)
+    .join("");
+  const body = result.rows
+    .map(
+      (row) =>
+        `<tr>${result.columns
+          .map((_, i) => `<td>${escXml(cellStr(row[i]))}</td>`)
+          .join("")}</tr>`,
+    )
+    .join("\n");
+  return `<table>\n<thead><tr>${th}</tr></thead>\n<tbody>\n${body}\n</tbody>\n</table>\n`;
+}
+
+export function resultToXml(result: QueryResult): string {
+  const rows = result.rows
+    .map((row) => {
+      const cells = result.columns
+        .map(
+          (c, i) =>
+            `    <${escXml(c.replace(/\W+/g, "_") || "col")}>${escXml(cellStr(row[i]))}</${escXml(c.replace(/\W+/g, "_") || "col")}>`,
+        )
+        .join("\n");
+      return `  <row>\n${cells}\n  </row>`;
+    })
+    .join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<result>\n${rows}\n</result>\n`;
+}
 
 export function resultToJson(result: QueryResult): string {
   const objs = result.rows.map((row) => {
@@ -86,8 +139,14 @@ export function formatResult(
       return resultToJson(result);
     case "markdown":
       return resultToMarkdown(result);
+    case "html":
+      return resultToHtml(result);
+    case "xml":
+      return resultToXml(result);
     case "inserts":
       return resultToInserts(result, table, engine);
+    case "xlsx":
+      throw new Error("xlsx is binary — use resultToXlsxBuffer");
     default:
       return csv(result);
   }

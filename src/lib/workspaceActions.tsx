@@ -34,6 +34,10 @@ export type WorkspaceActions = {
   openSqlInTab?: (sql: string) => void;
   /** Open Visualize Data as a workspace tab (closes the tools dialog if open). */
   openVisualizeTab?: () => void;
+  /** Local AI SQL template assist → new query tab. */
+  aiSqlAssist?: () => void;
+  /** Copy `git add` for the active SQL file path (if any). */
+  copyGitAddForSql?: () => void;
 };
 
 const Ctx = createContext<WorkspaceActions | null>(null);

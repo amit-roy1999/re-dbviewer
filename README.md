@@ -4,7 +4,18 @@ Fast, low-resource multi-engine SQL viewer built with Tauri 2 + React.
 
 Supports SQLite, PostgreSQL, MySQL, MariaDB, and SQL Server. Connections can use host fields or Beekeeper-style URLs, with favorites, categories, accent colors, and per-connection action permissions.
 
-**User documentation:** [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — features, workflows, permissions, import/export, and workspace usage.
+Passwords use the **OS keyring** when available, otherwise an encrypted **app vault** (never plaintext in the connections DB). **Tools → Visualize Data** builds relation queries into Vega-Lite charts.
+
+**User documentation:** [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — features, workflows, permissions, import/export, Visualize Data, password storage, and workspace usage.
+
+## Downloads
+
+Prebuilt installers (Linux AppImage/deb, Windows, macOS) are published on [GitHub Releases](https://github.com/amit-roy1999/re-dbviewer/releases) when a `v*` tag is pushed (see `.github/workflows/release.yml`). Until the first tagged release, build locally:
+
+```bash
+npm ci
+npm run tauri build -- --bundles appimage   # Linux
+```
 
 ## Develop
 

@@ -12,6 +12,8 @@ export const DEMO_CONNECTION = {
     port: 3306,
     user: "root",
     database: "demo",
+    passwordInKeyring: true,
+    storePassword: true,
   },
   permissions: {
     allowSelect: true,
@@ -98,6 +100,9 @@ export function tauriInitScriptSource(): string {
       connections: [structuredClone(DEMO), structuredClone(RESTRICTED)],
       categories: [],
       openIds: [],
+      vaultExists: false,
+      vaultUnlocked: false,
+      keyringAvailable: true,
     };
 
     window.__E2E__ = window.__E2E__ || {
@@ -217,6 +222,7 @@ export function tauriInitScriptSource(): string {
         }
         case "write_clipboard":
         case "write_text_file":
+        case "write_bytes_file":
         case "append_log":
           return null;
         case "read_clipboard":
@@ -273,6 +279,41 @@ export function tauriInitScriptSource(): string {
         case "test_connection":
           if (flags.failTestConnection) throw new Error("e2e: test failed");
           return "ok";
+        case "cancel_query":
+          return "Interrupted (e2e mock)";
+        case "vault_status":
+          return {
+            exists: !!store.vaultExists,
+            unlocked: !!store.vaultUnlocked,
+            keyringAvailable: store.keyringAvailable !== false,
+          };
+        case "vault_unlock":
+          store.vaultExists = true;
+          store.vaultUnlocked = true;
+          return {
+            exists: true,
+            unlocked: true,
+            keyringAvailable: store.keyringAvailable !== false,
+          };
+        case "vault_lock":
+          store.vaultUnlocked = false;
+          return {
+            exists: !!store.vaultExists,
+            unlocked: false,
+            keyringAvailable: store.keyringAvailable !== false,
+          };
+        case "clear_connection_password": {
+          const c = findConn(args && args.id);
+          if (!c) throw new Error("missing connection");
+          c.config = {
+            ...c.config,
+            password: undefined,
+            passwordInKeyring: false,
+            passwordInVault: false,
+            storePassword: false,
+          };
+          return null;
+        }
         default:
           console.warn("[e2e tauri mock] unhandled invoke:", cmd, args);
           return null;

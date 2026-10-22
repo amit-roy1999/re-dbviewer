@@ -62,6 +62,7 @@ pub fn describe_table(db: &Connection, table: &str) -> Result<TableDetails, Stri
                 nullable: r.get::<_, i64>(3)? == 0,
                 default_value: r.get(4)?,
                 is_pk: pk > 0,
+                generated: None,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -120,6 +121,7 @@ pub fn describe_table(db: &Connection, table: &str) -> Result<TableDetails, Stri
         columns,
         foreign_keys,
         indexes,
+        check_constraints: vec![],
     })
 }
 

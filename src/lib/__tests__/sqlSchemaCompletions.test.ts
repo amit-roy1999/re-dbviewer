@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildSqlSchemaMap,
   columnsFromDetails,
+  extractCteColumns,
+  extractTableAliases,
+  mergeSqlContextCompletions,
 } from "@/lib/sqlSchemaCompletions";
 import { sampleSchema } from "./fixtures";
 
@@ -49,5 +52,44 @@ describe("sqlSchemaCompletions", () => {
         indexes: [],
       }),
     ).toEqual(["id"]);
+  });
+
+  it("extracts table aliases from FROM/JOIN", () => {
+    expect(
+      extractTableAliases(
+        "SELECT u.id FROM users u JOIN orders o ON o.user_id = u.id",
+      ),
+    ).toEqual([
+      { table: "users", alias: "u" },
+      { table: "orders", alias: "o" },
+    ]);
+  });
+
+  it("extracts CTE select-list columns", () => {
+    expect(
+      extractCteColumns(
+        "WITH active AS (SELECT id, name AS nm FROM users) SELECT * FROM active",
+      ),
+    ).toEqual({ active: ["id", "nm"] });
+  });
+
+  it("merges alias and CTE into schema map", () => {
+    const base = buildSqlSchemaMap(
+      sampleSchema,
+      { users: ["id", "name"], orders: ["id", "user_id"] },
+    );
+    const merged = mergeSqlContextCompletions(
+      base,
+      "WITH t AS (SELECT id FROM users) SELECT u.name FROM users u, t",
+      { users: ["id", "name"] },
+    );
+    expect(merged.u).toMatchObject({
+      self: { detail: "alias → users" },
+      children: ["id", "name"],
+    });
+    expect(merged.t).toMatchObject({
+      self: { detail: "cte" },
+      children: ["id"],
+    });
   });
 });

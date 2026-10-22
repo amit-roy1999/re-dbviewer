@@ -566,34 +566,57 @@ export default function Home({ onOpen }: Props) {
     key: keyof ConnectionConfig,
     placeholder = "",
     type: "text" | "number" = "text",
+    browse?: boolean,
   ) {
     if (!draft) return null;
     const v = draft.config[key];
     return (
       <div className="grid gap-1.5">
         <Label>{label}</Label>
-        <Input
-          type={type}
-          className="font-mono text-xs"
-          placeholder={placeholder}
-          value={typeof v === "string" || typeof v === "number" ? v : ""}
-          onChange={(e) =>
-            setDraft(
-              syncUrl({
-                ...draft,
-                config: {
-                  ...draft.config,
-                  [key]:
-                    type === "number"
-                      ? e.target.value
-                        ? Number(e.target.value)
-                        : null
-                      : e.target.value,
-                },
-              }),
-            )
-          }
-        />
+        <div className={browse ? "flex gap-2" : undefined}>
+          <Input
+            type={type}
+            className="font-mono text-xs"
+            placeholder={placeholder}
+            value={typeof v === "string" || typeof v === "number" ? v : ""}
+            onChange={(e) =>
+              setDraft(
+                syncUrl({
+                  ...draft,
+                  config: {
+                    ...draft.config,
+                    [key]:
+                      type === "number"
+                        ? e.target.value
+                          ? Number(e.target.value)
+                          : null
+                        : e.target.value,
+                  },
+                }),
+              )
+            }
+          />
+          {browse ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                const file = await open({ multiple: false });
+                if (typeof file === "string") {
+                  setDraft(
+                    syncUrl({
+                      ...draft,
+                      config: { ...draft.config, [key]: file },
+                    }),
+                  );
+                }
+              }}
+            >
+              Browse
+            </Button>
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -638,16 +661,20 @@ export default function Home({ onOpen }: Props) {
               <option value="verify-full">verify-full</option>
             </select>
           </div>
-          {cfgField("SSL CA file (PEM)", "sslCa", "/path/ca.pem")}
+          {cfgField("SSL CA file (PEM)", "sslCa", "/path/ca.pem", "text", true)}
           {cfgField(
             "SSL client cert (PEM)",
             "sslCert",
             mysqlLike ? "saved; not used by MySQL driver" : "/path/client.pem",
+            "text",
+            true,
           )}
           {cfgField(
             "SSL client key (PEM)",
             "sslKey",
             mysqlLike ? "saved; not used by MySQL driver" : "/path/client.key",
+            "text",
+            true,
           )}
           {draft.engine === "postgres" || mysqlLike ? (
             <div className="sm:col-span-2">
@@ -664,14 +691,33 @@ export default function Home({ onOpen }: Props) {
           {cfgField("SSH user", "sshUser")}
           {cfgField("SSH port", "sshPort", "22", "number")}
           <div className="sm:col-span-2">
-            {cfgField("SSH private key file", "sshKeyPath", "~/.ssh/id_ed25519")}
+            {cfgField(
+              "SSH private key file",
+              "sshKeyPath",
+              "~/.ssh/id_ed25519",
+              "text",
+              true,
+            )}
           </div>
+          <label className="flex items-center gap-2 text-sm sm:col-span-2">
+            <input
+              type="checkbox"
+              data-testid="ssh-use-agent"
+              checked={!!draft.config.sshUseAgent}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  config: { ...draft.config, sshUseAgent: e.target.checked },
+                })
+              }
+            />
+            Prefer ssh-agent (key must already be loaded; no password prompt)
+          </label>
           <p className="text-[11px] text-muted-foreground sm:col-span-2">
             {hasSsh
-              ? "SSH tunnel uses the system `ssh` binary with key auth (no password prompt); the database host/port above is resolved from the SSH server."
-              : "Optional. Leave SSH host empty for a direct connection."}{" "}
-            Prefer storing passwords via Store in Vault below (OS keyring when
-            available, otherwise the encrypted app vault).
+              ? "SSH tunnel uses system `ssh -N -L` (BatchMode). Browse for SSL/SSH files. MySQL client cert/key are stored but not applied by the driver."
+              : "Optional. Leave SSH host empty for a direct connection. Use Browse for SSL PEMs."}{" "}
+            Prefer Store in Vault for DB passwords.
           </p>
         </div>
       </details>
@@ -691,6 +737,7 @@ export default function Home({ onOpen }: Props) {
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
+            data-testid="store-password-checkbox"
             checked={storeOn}
             onChange={(e) =>
               setDraft({
@@ -719,6 +766,7 @@ export default function Home({ onOpen }: Props) {
                 size="sm"
                 variant="ghost"
                 className="h-6 px-2 text-[11px]"
+                data-testid="clear-stored-password"
                 disabled={busy}
                 onClick={() => void clearStoredPassword()}
               >
@@ -1030,8 +1078,9 @@ export default function Home({ onOpen }: Props) {
                     />
                   </div>
                   <div className="grid gap-1.5">
-                    <Label>Password</Label>
+                    <Label htmlFor="conn-password">Password</Label>
                     <Input
+                      id="conn-password"
                       type="password"
                       value={draft.config.password ?? ""}
                       onChange={(e) =>
@@ -1098,6 +1147,26 @@ export default function Home({ onOpen }: Props) {
                 Favorite
               </label>
 
+              {draft.engine !== "sqlite" ? (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    data-testid="safe-mode-checkbox"
+                    checked={!!draft.config.safeMode}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        config: {
+                          ...draft.config,
+                          safeMode: e.target.checked,
+                        },
+                      })
+                    }
+                  />
+                  Safe mode (confirm INSERT / UPDATE / DELETE / DROP)
+                </label>
+              ) : null}
+
               <div className="grid gap-1.5">
                 <Label>Allowed actions</Label>
                 <div className="grid grid-cols-2 gap-1.5 text-sm">
@@ -1157,7 +1226,7 @@ export default function Home({ onOpen }: Props) {
           }
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md" data-testid="vault-unlock-dialog">
           <DialogHeader>
             <DialogTitle>
               {vault?.exists ? "Unlock password vault" : "Create password vault"}

@@ -865,6 +865,7 @@ mod tests {
                     nullable: false,
                     default_value: None,
                     is_pk: true,
+                    generated: None,
                 },
                 ColumnInfo {
                     name: "user_id".into(),
@@ -872,6 +873,7 @@ mod tests {
                     nullable: false,
                     default_value: None,
                     is_pk: false,
+                    generated: None,
                 },
             ],
             foreign_keys: vec![ForeignKeyInfo {
@@ -881,6 +883,7 @@ mod tests {
                 ref_columns: vec!["id".into()],
             }],
             indexes: vec![],
+            check_constraints: vec![],
         };
         let cols = default_columns_from_details(&d);
         assert_eq!(cols[0].kind, "sequence");
@@ -1039,6 +1042,7 @@ mod tests {
                     nullable: false,
                     default_value: None,
                     is_pk: true,
+                    generated: None,
                 },
                 ColumnInfo {
                     name: "a".into(),
@@ -1046,6 +1050,7 @@ mod tests {
                     nullable: false,
                     default_value: None,
                     is_pk: false,
+                    generated: None,
                 },
                 ColumnInfo {
                     name: "b".into(),
@@ -1053,6 +1058,7 @@ mod tests {
                     nullable: false,
                     default_value: None,
                     is_pk: false,
+                    generated: None,
                 },
                 ColumnInfo {
                     name: "email".into(),
@@ -1060,6 +1066,7 @@ mod tests {
                     nullable: false,
                     default_value: None,
                     is_pk: false,
+                    generated: None,
                 },
             ],
             foreign_keys: vec![],
@@ -1075,6 +1082,7 @@ mod tests {
                     columns: vec!["email".into()],
                 },
             ],
+            check_constraints: vec![],
         };
         let u = unique_column_names(&d);
         assert!(u.contains("id"));

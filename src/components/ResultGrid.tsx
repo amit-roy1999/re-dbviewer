@@ -22,6 +22,12 @@ import {
   resultToJson,
   resultToMarkdown,
 } from "@/lib/resultExport";
+import {
+  bytesToHexDump,
+  bytesToImageDataUrl,
+  classifyCellPreview,
+} from "@/lib/cellPreview";
+import { classifyGeo } from "@/lib/geoPreview";
 
 type Props = {
   result: QueryResult;
@@ -146,6 +152,9 @@ function ResultGridInner({
   const [editingCell, setEditingCell] = useState<CellEditState | null>(null);
   const [anchorRow, setAnchorRow] = useState<number | null>(null);
   const [jsonView, setJsonView] = useState<string | null>(null);
+  const [hexView, setHexView] = useState<string | null>(null);
+  const [imageView, setImageView] = useState<string | null>(null);
+  const [geoView, setGeoView] = useState<string | null>(null);
 
   const selectRows = (next: number[]) => {
     const deduped = [...new Set(next)].sort((a, b) => a - b);
@@ -510,6 +519,46 @@ function ResultGridInner({
                   View as JSON
                 </button>
               ) : null}
+              {classifyCellPreview(contextMenu.value) === "hex" ||
+              classifyCellPreview(contextMenu.value) === "image" ? (
+                <button
+                  type="button"
+                  className="flex w-full items-center rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+                  onClick={() => {
+                    const hex = bytesToHexDump(contextMenu.value);
+                    if (hex) setHexView(hex);
+                    setContextMenu(null);
+                  }}
+                >
+                  View as hex
+                </button>
+              ) : null}
+              {classifyCellPreview(contextMenu.value) === "image" ? (
+                <button
+                  type="button"
+                  className="flex w-full items-center rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+                  onClick={() => {
+                    const url = bytesToImageDataUrl(contextMenu.value);
+                    if (url) setImageView(url);
+                    setContextMenu(null);
+                  }}
+                >
+                  View as image
+                </button>
+              ) : null}
+              {classifyGeo(contextMenu.value) ? (
+                <button
+                  type="button"
+                  className="flex w-full items-center rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+                  onClick={() => {
+                    const g = classifyGeo(contextMenu.value);
+                    if (g) setGeoView(g.text);
+                    setContextMenu(null);
+                  }}
+                >
+                  View as geometry
+                </button>
+              ) : null}
               {onCellEdit ? (
                 <button
                   type="button"
@@ -628,6 +677,50 @@ function ResultGridInner({
           <pre className="max-h-[60vh] overflow-auto rounded border border-border bg-muted/30 p-3 font-mono text-xs">
             {jsonView}
           </pre>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={hexView != null} onOpenChange={(o) => !o && setHexView(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Hex</DialogTitle>
+          </DialogHeader>
+          <pre
+            data-testid="cell-hex-view"
+            className="max-h-[60vh] overflow-auto rounded border border-border bg-muted/30 p-3 font-mono text-[11px] leading-relaxed"
+          >
+            {hexView}
+          </pre>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={geoView != null} onOpenChange={(o) => !o && setGeoView(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Geometry</DialogTitle>
+          </DialogHeader>
+          <pre
+            data-testid="cell-geo-view"
+            className="max-h-[60vh] overflow-auto rounded border border-border bg-muted/30 p-3 font-mono text-xs whitespace-pre-wrap"
+          >
+            {geoView}
+          </pre>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={imageView != null} onOpenChange={(o) => !o && setImageView(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Image</DialogTitle>
+          </DialogHeader>
+          {imageView ? (
+            <img
+              data-testid="cell-image-view"
+              src={imageView}
+              alt="cell"
+              className="max-h-[60vh] w-full object-contain"
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>

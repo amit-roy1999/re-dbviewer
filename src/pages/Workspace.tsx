@@ -19,6 +19,8 @@ import {
   Play,
   Table2,
   Eye,
+  Hash,
+  Layers,
   Shield,
   Plus,
   X,
@@ -35,6 +37,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Activity,
+  Circle,
   FolderOpen,
   Save,
   AlignLeft,
@@ -114,6 +117,19 @@ import {
   pushHistory,
   type HistoryEntry,
 } from "@/lib/queryHistory";
+import {
+  loadStoredSqlTabs,
+  saveStoredSqlTabs,
+} from "@/lib/queryTabsStore";
+import { renameWithDependentsSql } from "@/lib/renameDependents";
+import { openPrintReport } from "@/lib/printReport";
+import {
+  dueSchedules,
+  loadSchedules,
+  markRan,
+  saveSchedules,
+} from "@/lib/backupSchedule";
+import { suggestSql } from "@/lib/aiSqlAssist";
 import { csvFromResult } from "@/lib/csvFromResult";
 import {
   EXPORT_FORMATS,
@@ -131,7 +147,7 @@ import {
   usePreferences,
   type AppPreferences,
 } from "@/lib/preferences";
-import { isDestructiveSql } from "@/lib/destructiveSql";
+import { isDestructiveSql, isSafeModeConfirmSql } from "@/lib/destructiveSql";
 import {
   ROUTINES_SQL,
   buildRoutineStatements,
@@ -142,7 +158,6 @@ import {
   extractViewBody,
   isMysqlLike,
   renameTableSql,
-  renamedRef,
   routineTemplate,
   routinesFromResult,
   showCreateRoutineSql,
@@ -158,6 +173,7 @@ import {
 } from "@/lib/snippets";
 import {
   buildSqlSchemaMap,
+  mergeSqlContextCompletions,
   columnsFromDetails,
 } from "@/lib/sqlSchemaCompletions";
 import {
@@ -252,7 +268,7 @@ type Props = {
   onOpenTool?: (tool: ToolId) => void;
 };
 
-type StructSection = "columns" | "indexes" | "relations";
+type StructSection = "columns" | "indexes" | "relations" | "checks";
 
 type SqlTab = {
   kind: "sql";
@@ -287,6 +303,8 @@ type TableEditTab = {
   originalFks: EditableFk[];
   /** MySQL / MariaDB table options (D12). */
   advanced?: TableAdvanced;
+  /** DDL snapshot at open — for Review DDL diff. */
+  baselineDdl?: string;
 };
 type ViewEditTab = {
   kind: "viewEdit";
@@ -454,10 +472,21 @@ export default function Workspace({
     () => connection.config.database?.trim() || "",
   );
   const [filter, setFilter] = useState("");
-  const [tabs, setTabs] = useState<Tab[]>([
-    { kind: "sql", id: "query-1", label: "Query 1", filePath: null },
-  ]);
-  const [active, setActive] = useState("query-1");
+  const [tabs, setTabs] = useState<Tab[]>(() => {
+    const stored = loadStoredSqlTabs(connection.id);
+    if (stored?.tabs.length) {
+      return stored.tabs.map((t, i) => ({
+        kind: "sql" as const,
+        id: t.id,
+        label: t.title || `Query ${i + 1}`,
+        filePath: null,
+      }));
+    }
+    return [{ kind: "sql", id: "query-1", label: "Query 1", filePath: null }];
+  });
+  const [active, setActive] = useState(
+    () => loadStoredSqlTabs(connection.id)?.activeId ?? "query-1",
+  );
   const [queries, setQueries] = useState<Record<string, QState>>({});
   const [dataResult, setDataResult] = useState<QueryResult | null>(null);
   const [busyAction, setBusyAction] = useState<
@@ -477,6 +506,7 @@ export default function Workspace({
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [health, setHealth] = useState<"ok" | "bad" | "checking">("checking");
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   const [selectedRowIndexes, setSelectedRowIndexes] = useState<number[]>([]);
   const [draftRow, setDraftRow] = useState<Record<string, string> | null>(
@@ -503,6 +533,7 @@ export default function Workspace({
   const [triggerOpen, setTriggerOpen] = useState(false);
   const [schemaInspectOpen, setSchemaInspectOpen] = useState(false);
   const [dumpOpen, setDumpOpen] = useState(false);
+  const [dumpMode, setDumpMode] = useState<"dump" | "restore">("dump");
   const [workspaceMode, setWorkspaceMode] = useState<"objects" | "admin">(
     "objects",
   );
@@ -554,20 +585,40 @@ export default function Workspace({
   const [prefsComp] = useState(() => new Compartment());
   const [highlightComp] = useState(() => new Compartment());
   const schemaMapRef = useRef<Record<string, SQLNamespace>>({});
+  const columnsCacheRef = useRef<Record<string, string[]>>({});
+  const aliasSchemaTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const helpOpenRef = useRef(false);
   helpOpenRef.current = helpOpen;
   /** Run counter + "ignore results up to" watermark for the frontend-only Stop. */
   const runSeq = useRef(0);
   const cancelledUpTo = useRef(0);
   /** SQL text per query tab; the single editor shows `ownerRef`'s text. */
-  const sqlRef = useRef<Record<string, string>>({
-    "query-1":
-      connection.engine === "sqlite"
-        ? "-- Explore tables\nSELECT name FROM sqlite_master\nWHERE type = 'table'\nORDER BY name;"
-        : "-- Write a query, then Run\nSELECT 1 AS ok;",
-  });
-  const ownerRef = useRef<string | null>("query-1");
-  const queryCounter = useRef(1);
+  const sqlRef = useRef<Record<string, string>>((() => {
+    const stored = loadStoredSqlTabs(connection.id);
+    if (stored?.tabs.length) {
+      const m: Record<string, string> = {};
+      for (const t of stored.tabs) m[t.id] = t.sql;
+      return m;
+    }
+    return {
+      "query-1":
+        connection.engine === "sqlite"
+          ? "-- Explore tables\nSELECT name FROM sqlite_master\nWHERE type = 'table'\nORDER BY name;"
+          : "-- Write a query, then Run\nSELECT 1 AS ok;",
+    };
+  })());
+  const ownerRef = useRef<string | null>(
+    loadStoredSqlTabs(connection.id)?.activeId ?? "query-1",
+  );
+  const queryCounter = useRef(
+    Math.max(
+      1,
+      ...(loadStoredSqlTabs(connection.id)?.tabs.map((t) => {
+        const m = /^query-(\d+)$/.exec(t.id);
+        return m ? Number(m[1]) : 1;
+      }) ?? [1]),
+    ),
+  );
   const newTableCounter = useRef(0);
   const prefetchGen = useRef(0);
   const actionsRef = useRef<WorkspaceActions | null>(null);
@@ -730,6 +781,24 @@ export default function Workspace({
         EditorView.updateListener.of((u) => {
           if (u.docChanged && ownerRef.current) {
             sqlRef.current[ownerRef.current] = u.state.doc.toString();
+            if (aliasSchemaTimer.current) clearTimeout(aliasSchemaTimer.current);
+            aliasSchemaTimer.current = setTimeout(() => {
+              const text = u.view.state.doc.toString();
+              const merged = mergeSqlContextCompletions(
+                schemaMapRef.current,
+                text,
+                columnsCacheRef.current,
+              );
+              u.view.dispatch({
+                effects: schemaComp.reconfigure(
+                  sql({
+                    dialect: dialectFor(engine),
+                    schema: merged,
+                    upperCaseKeywords: false,
+                  }),
+                ),
+              });
+            }, 200);
           }
           if ((u.selectionSet || u.docChanged) && helpOpenRef.current) {
             syncHelpWord(u.view);
@@ -774,8 +843,11 @@ export default function Workspace({
   }, [prefs, prefsComp]);
 
   useEffect(() => {
-    const map = buildSqlSchemaMap(schema, columnsCache, routines);
-    schemaMapRef.current = map;
+    columnsCacheRef.current = columnsCache;
+    const base = buildSqlSchemaMap(schema, columnsCache, routines);
+    schemaMapRef.current = base;
+    const text = editorRef.current?.state.doc.toString() ?? "";
+    const map = mergeSqlContextCompletions(base, text, columnsCache);
     editorRef.current?.dispatch({
       effects: schemaComp.reconfigure(
         sql({
@@ -841,6 +913,73 @@ export default function Workspace({
     focusSql(id);
     return id;
   }
+
+  // Persist SQL tabs (bodies) across restarts for this connection.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      const sqlTabs = tabs.filter((x) => x.kind === "sql");
+      if (!sqlTabs.length) return;
+      saveStoredSqlTabs({
+        connectionId: connection.id,
+        activeId: sqlTabs.some((x) => x.id === active) ? active : sqlTabs[0].id,
+        tabs: sqlTabs.map((x) => ({
+          id: x.id,
+          title: x.label,
+          sql: sqlRef.current[x.id] ?? "",
+        })),
+      });
+    }, 800);
+    return () => window.clearTimeout(t);
+  }, [tabs, active, connection.id, queries]);
+
+  // Connection health heartbeat
+  useEffect(() => {
+    let dead = false;
+    const tick = async () => {
+      try {
+        await invoke("run_sql", {
+          sql: "SELECT 1 AS ok",
+          connectionId: connection.id,
+        });
+        if (!dead) setHealth("ok");
+      } catch {
+        if (!dead) setHealth("bad");
+      }
+    };
+    setHealth("checking");
+    void tick();
+    const id = window.setInterval(() => void tick(), 30_000);
+    return () => {
+      dead = true;
+      window.clearInterval(id);
+    };
+  }, [connection.id]);
+
+  // Backup schedule reminder (prefs → local schedule)
+  useEffect(() => {
+    const hours = prefs.backupIntervalHours ?? 0;
+    const list = loadSchedules();
+    const others = list.filter((s) => s.connectionId !== connection.id);
+    if (hours > 0) {
+      const prev = list.find((s) => s.connectionId === connection.id);
+      saveSchedules([
+        ...others,
+        {
+          connectionId: connection.id,
+          intervalHours: hours,
+          lastRunAt: prev?.lastRunAt ?? null,
+          enabled: true,
+        },
+      ]);
+      if (dueSchedules().some((d) => d.connectionId === connection.id)) {
+        setStatus(
+          "Backup reminder: File → Dump Selected Tables… or Dump Schema SQL…",
+        );
+      }
+    } else {
+      saveSchedules(others);
+    }
+  }, [connection.id, prefs.backupIntervalHours]);
 
   // ---- filtered tree / derived ----------------------------------------
 
@@ -1608,14 +1747,15 @@ export default function Workspace({
     }
   }
 
-  /** Ask before DROP / TRUNCATE / DELETE when the preference is on. */
+  /** Ask before risky SQL when prefs or connection safeMode require it. */
   async function confirmDestructive(stmts: string[]): Promise<boolean> {
-    if (!loadPreferences().confirmDestructive) return true;
-    const bad = stmts.filter(isDestructiveSql);
+    const safe = !!connection.config.safeMode;
+    if (!safe && !loadPreferences().confirmDestructive) return true;
+    const bad = stmts.filter(safe ? isSafeModeConfirmSql : isDestructiveSql);
     if (!bad.length) return true;
     return askNative(
-      `${bad.length === 1 ? "This statement is" : `${bad.length} statements are`} destructive:\n\n${bad[0].slice(0, 240)}${bad.length > 1 ? "\n…" : ""}\n\nRun it?`,
-      "Confirm destructive SQL",
+      `${bad.length === 1 ? "This statement is" : `${bad.length} statements are`} ${safe ? "write/destructive (safe mode)" : "destructive"}:\n\n${bad[0].slice(0, 240)}${bad.length > 1 ? "\n…" : ""}\n\nRun it?`,
+      safe ? "Safe mode confirmation" : "Confirm destructive SQL",
     );
   }
 
@@ -1629,14 +1769,27 @@ export default function Workspace({
 
   const isCancelled = (token: number) => token <= cancelledUpTo.current;
 
-  /** Frontend-only cancel: late results are ignored (the server keeps running). */
+  /** Ignore late client results and ask the backend to cancel the server-side statement. */
   function stopRun() {
     if (!busyAction) return;
     cancelledUpTo.current = runSeq.current;
     setBusy(false);
     setBusyAction(null);
     setError("");
-    setStatus("Stopped — late result ignored (server may still finish the statement)");
+    setStatus("Stopping…");
+    void invoke<string>("cancel_query", {})
+      .then((msg) => {
+        setStatus(
+          msg
+            ? `Stopped — ${msg}`
+            : "Stopped — late result ignored",
+        );
+      })
+      .catch(() => {
+        setStatus(
+          "Stopped — late result ignored (server cancel unavailable)",
+        );
+      });
   }
 
   async function execute(
@@ -2040,10 +2193,19 @@ export default function Workspace({
     });
     if (!path) return;
     try {
-      await invoke("write_text_file", {
-        path,
-        contents: formatResult(fmt, res, table, engine, csvFromResult),
-      });
+      if (fmt === "xlsx") {
+        const { resultToXlsxBuffer } = await import("@/lib/excelExport");
+        const buf = resultToXlsxBuffer(res, name);
+        await invoke("write_bytes_file", {
+          path,
+          bytes: Array.from(new Uint8Array(buf)),
+        });
+      } else {
+        await invoke("write_text_file", {
+          path,
+          contents: formatResult(fmt, res, table, engine, csvFromResult),
+        });
+      }
       setError("");
       setStatus(`Exported result ${f.label} → ${path}`);
     } catch (e) {
@@ -2055,6 +2217,10 @@ export default function Workspace({
     const { res, table } = currentResultInfo();
     if (!res || !res.columns.length) {
       setError("No result to copy — run a query first");
+      return;
+    }
+    if (fmt === "xlsx") {
+      setError("Excel export writes a file — use Export → Excel");
       return;
     }
     try {
@@ -2198,32 +2364,6 @@ export default function Workspace({
       );
       await loadTable(tab.table, 0, tab.filters, tab.sort);
       await loadDetails(tab.table);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function importSqlFile() {
-    const path = await open({
-      multiple: false,
-      filters: [{ name: "SQL", extensions: ["sql"] }],
-    });
-    if (typeof path !== "string") return;
-    setBusy(true);
-    setError("");
-    setStatus("");
-    try {
-      const sqlFile = await invoke<string>("read_text_file", { path });
-      const n = await invoke<number>("run_sql_script", { sql: sqlFile });
-      setStatus(`Ran ${n} statement(s)`);
-      const tab = tabs.find((t) => t.id === active);
-      if (tab?.kind === "data") {
-        await loadTable(tab.table, 0, tab.filters, tab.sort);
-        await loadDetails(tab.table);
-      }
-      await loadSchema();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -2402,28 +2542,53 @@ export default function Workspace({
     if (!ddlGuard("Rename table")) return;
     setPrompt({
       title: `Rename ${shortTable(table)}`,
-      label: "New name",
+      label: "New name (opens dependent-aware SQL preview)",
       initial: shortTable(table),
-      confirmLabel: "Rename",
+      confirmLabel: "Preview SQL",
       onSubmit: async (name) => {
         if (name === shortTable(table)) return;
-        setBusy(true);
-        setError("");
-        try {
-          await invoke("run_sql", { sql: renameTableSql(engine, table, name) });
-          closeTabsForTable(table);
-          setSelectedTable(renamedRef(table, name));
-          setColumnsCache((prev) => {
-            const { [table]: _drop, ...rest } = prev;
-            return rest;
-          });
-          setStatus(`Renamed ${table} → ${name}`);
-          await loadSchema();
-        } catch (e) {
-          setError(String(e));
-        } finally {
-          setBusy(false);
+        const byTable: Record<string, TableDetails> = {};
+        if (details && selectedTable === table) byTable[table] = details;
+        for (const [ref, cols] of Object.entries(columnsCache)) {
+          if (byTable[ref]) continue;
+          byTable[ref] = {
+            columns: cols.map((c) => ({
+              name: c,
+              dataType: "",
+              nullable: true,
+              defaultValue: null,
+              isPk: false,
+            })),
+            foreignKeys: [],
+            indexes: [],
+            checkConstraints: [],
+          };
         }
+        try {
+          let n = 0;
+          for (const s of schema) {
+            for (const c of s.children) {
+              if (c.kind === "view" || c.kind === "sequence") continue;
+              if (n++ > 40) break;
+              const ref = tableRef(s.name, c.name, engine);
+              if (byTable[ref]?.foreignKeys?.length) continue;
+              try {
+                byTable[ref] = await fetchDetails(ref);
+              } catch {
+                /* skip */
+              }
+            }
+          }
+        } catch {
+          /* best-effort dependents */
+        }
+        const preview = renameWithDependentsSql(engine, table, name, byTable);
+        newQueryTab(
+          `${preview}\n-- Or run:\n${renameTableSql(engine, table, name)}\n`,
+        );
+        setStatus(
+          `Rename preview opened — review dependents, then run the ALTER`,
+        );
       },
     });
   }
@@ -2439,24 +2604,21 @@ export default function Workspace({
       const cols = columnsToEditable(d.columns);
       const idx = indexesToEditable(d.indexes);
       const fks = fksToEditable(d.foreignKeys);
+      const draft: TableEditTab = {
+        kind: "tableEdit",
+        id,
+        table,
+        mode: "alter",
+        columns: cols,
+        originalColumns: cols.map((c) => ({ ...c })),
+        indexes: idx,
+        originalIndexes: idx.map((i) => ({ ...i })),
+        fks,
+        originalFks: fks.map((f) => ({ ...f })),
+      };
+      draft.baselineDdl = tableEditDdl(draft);
       setTabs((prev) =>
-        prev.some((t) => t.id === id)
-          ? prev
-          : [
-              ...prev,
-              {
-                kind: "tableEdit",
-                id,
-                table,
-                mode: "alter",
-                columns: cols,
-                originalColumns: cols.map((c) => ({ ...c })),
-                indexes: idx,
-                originalIndexes: idx.map((i) => ({ ...i })),
-                fks,
-                originalFks: fks.map((f) => ({ ...f })),
-              },
-            ],
+        prev.some((t) => t.id === id) ? prev : [...prev, draft],
       );
       setSelectedTable(table);
       setActive(id);
@@ -2660,21 +2822,21 @@ export default function Workspace({
     if (!ddlGuard("Create table")) return;
     const id = `tableedit:new-${++newTableCounter.current}`;
     const cols = templateCols ?? defaultNewTableColumns(engine);
-    setTabs((prev) => [
-      ...prev,
-      {
-        kind: "tableEdit",
-        id,
-        table: "",
-        mode: "create",
-        columns: cols,
-        originalColumns: [],
-        indexes: [],
-        originalIndexes: [],
-        fks: [],
-        originalFks: [],
-      },
-    ]);
+    const draft: TableEditTab = {
+      kind: "tableEdit",
+      id,
+      table: "",
+      mode: "create",
+      columns: cols,
+      originalColumns: [],
+      indexes: [],
+      originalIndexes: [],
+      fks: [],
+      originalFks: [],
+      baselineDdl: "",
+    };
+    draft.baselineDdl = "";
+    setTabs((prev) => [...prev, draft]);
     setActive(id);
   }
 
@@ -3180,6 +3342,7 @@ export default function Workspace({
       }
       if (mysql) parts.push("SET FOREIGN_KEY_CHECKS=1;\n");
       await invoke("write_text_file", { path, contents: parts.join("\n") });
+      markRan(connection.id);
       setStatus(
         `Dumped ${tables.length - failed}/${tables.length} table(s) → ${path}`,
       );
@@ -3220,9 +3383,15 @@ export default function Workspace({
       globalSearch: () => setSearchOpen(true),
       inspectTable: () => void inspectTable(),
       dumpSchema: (includeData = true) => void dumpSchema(includeData),
-      restoreSql: () => void importSqlFile(),
+      restoreSql: () => {
+        setDumpMode("restore");
+        setDumpOpen(true);
+      },
       schemaInspector: () => setSchemaInspectOpen(true),
-      dumpTables: () => setDumpOpen(true),
+      dumpTables: () => {
+        setDumpMode("dump");
+        setDumpOpen(true);
+      },
       openServerAdmin: () => {
         if (!adminSupported(engine)) {
           setStatus("Administration is available for MySQL, MariaDB, and PostgreSQL");
@@ -3245,6 +3414,26 @@ export default function Workspace({
       },
       openSqlInTab: (sql: string) => void newQueryTab(sql),
       openVisualizeTab: () => openVisualizeTab(),
+      aiSqlAssist: () => {
+        if (!prefs.aiAssistLocal) {
+          setStatus("Enable Local AI SQL assist in Preferences first");
+          return;
+        }
+        const p = window.prompt(
+          "Describe the query (e.g. list tables, count users, top 10 from orders):",
+        );
+        if (!p?.trim()) return;
+        newQueryTab(suggestSql(p, engine));
+      },
+      copyGitAddForSql: () => {
+        const tab = tabs.find((t) => t.id === active);
+        if (tab?.kind !== "sql" || !tab.filePath) {
+          setStatus("Open or save a SQL file first (File → Save)");
+          return;
+        }
+        void copyText(`git add ${JSON.stringify(tab.filePath)}`);
+        setStatus("Copied git add command for current SQL file");
+      },
     };
   });
 
@@ -3277,6 +3466,8 @@ export default function Workspace({
       openTable: (ref) => actionsRef.current?.openTable?.(ref),
       openSqlInTab: (sql) => actionsRef.current?.openSqlInTab?.(sql),
       openVisualizeTab: () => actionsRef.current?.openVisualizeTab?.(),
+      aiSqlAssist: () => actionsRef.current?.aiSqlAssist?.(),
+      copyGitAddForSql: () => actionsRef.current?.copyGitAddForSql?.(),
     };
     onActionsReadyRef.current?.(stable);
 
@@ -3550,7 +3741,12 @@ export default function Workspace({
                   <DropdownMenuItem onSelect={() => void dumpSchema(true)}>
                     Dump schema + data (one file)…
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setDumpOpen(true)}>
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      setDumpMode("dump");
+                      setDumpOpen(true);
+                    }}
+                  >
                     Dump selected tables…
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => setSchemaInspectOpen(true)}>
@@ -3559,7 +3755,10 @@ export default function Workspace({
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     disabled={!connection.permissions.allowDdl}
-                    onSelect={() => void importSqlFile()}
+                    onSelect={() => {
+                      setDumpMode("restore");
+                      setDumpOpen(true);
+                    }}
                   >
                     Restore SQL file…
                   </DropdownMenuItem>
@@ -3607,12 +3806,23 @@ export default function Workspace({
                         connection.engine,
                       );
                       const selected = selectedTable === full;
-                      const isView = c.kind === "view";
                       const ddl = connection.permissions.allowDdl;
+                      const isView = c.kind === "view" || c.kind === "matview";
+                      const kindIcon =
+                        c.kind === "view" ? (
+                          <Eye className="size-3.5 shrink-0 opacity-60" />
+                        ) : c.kind === "matview" ? (
+                          <Layers className="size-3.5 shrink-0 opacity-60" />
+                        ) : c.kind === "sequence" ? (
+                          <Hash className="size-3.5 shrink-0 opacity-60" />
+                        ) : (
+                          <Table2 className="size-3.5 shrink-0 opacity-60" />
+                        );
                       return (
                         <div
                           key={full}
                           data-testid={`schema-row-${c.name}`}
+                          data-kind={c.kind}
                           className={cn(
                             "group flex w-full min-w-0 items-center overflow-hidden rounded-md",
                             selected && "bg-muted",
@@ -3630,11 +3840,7 @@ export default function Workspace({
                             onClick={() => openData(full)}
                             onDoubleClick={() => openStructure(full)}
                           >
-                            {isView ? (
-                              <Eye className="size-3.5 shrink-0 opacity-60" />
-                            ) : (
-                              <Table2 className="size-3.5 shrink-0 opacity-60" />
-                            )}
+                            {kindIcon}
                             <span className="truncate">{c.name}</span>
                           </button>
                           <div
@@ -3860,8 +4066,14 @@ export default function Workspace({
               view={adminView}
               actions={{
                 dumpSchema: (includeData) => void dumpSchema(includeData),
-                dumpTables: () => setDumpOpen(true),
-                restoreSql: () => void importSqlFile(),
+                dumpTables: () => {
+                  setDumpMode("dump");
+                  setDumpOpen(true);
+                },
+                restoreSql: () => {
+                  setDumpMode("restore");
+                  setDumpOpen(true);
+                },
               }}
             />
           ) : null}
@@ -4108,7 +4320,7 @@ export default function Workspace({
                         </DropdownMenuItem>
                       ))}
                       <DropdownMenuSeparator />
-                      {EXPORT_FORMATS.filter((f) => f.id !== "csv").map((f) => (
+                      {EXPORT_FORMATS.filter((f) => f.id !== "csv" && f.id !== "xlsx").map((f) => (
                         <DropdownMenuItem
                           key={`copy-${f.id}`}
                           onSelect={() => void copyQueryAs(f.id)}
@@ -4116,6 +4328,23 @@ export default function Workspace({
                           Copy as {f.label}
                         </DropdownMenuItem>
                       ))}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          const { res, name } = currentResultInfo();
+                          if (!res?.columns.length) {
+                            setError("No result to print — run a query first");
+                            return;
+                          }
+                          try {
+                            openPrintReport(name, res);
+                          } catch (e) {
+                            setError(String(e));
+                          }
+                        }}
+                      >
+                        Print / PDF…
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                   <span className="ml-2 truncate text-[11px] text-muted-foreground">
@@ -4793,6 +5022,7 @@ export default function Workspace({
                     ["columns", "Columns"],
                     ["indexes", "Indexes"],
                     ["relations", "Relations"],
+                    ["checks", "Checks"],
                   ] as const
                 ).map(([id, label]) => (
                   <button
@@ -4901,6 +5131,7 @@ export default function Workspace({
                           <TableHead className="h-8 text-xs">
                             Default Value
                           </TableHead>
+                          <TableHead className="h-8 text-xs">Generated</TableHead>
                           <TableHead className="h-8 text-xs">Primary</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -4918,6 +5149,12 @@ export default function Workspace({
                             </TableCell>
                             <TableCell className="max-w-48 truncate py-2 font-mono text-xs text-muted-foreground">
                               {c.defaultValue ?? "(NULL)"}
+                            </TableCell>
+                            <TableCell
+                              className="max-w-48 truncate py-2 font-mono text-xs text-muted-foreground"
+                              title={c.generated ?? undefined}
+                            >
+                              {c.generated ?? ""}
                             </TableCell>
                             <TableCell className="py-2">
                               {c.isPk ? (
@@ -4982,6 +5219,40 @@ export default function Workspace({
                   </div>
                 )
               ) : null}
+
+              {activeTab.section === "checks" ? (
+                <div
+                  data-testid="structure-checks"
+                  className="min-h-0 flex-1 overflow-auto p-3"
+                >
+                  {!(details?.checkConstraints?.length) ? (
+                    <p className="text-sm text-muted-foreground">
+                      No check constraints (or engine did not report any).
+                    </p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="h-8 text-xs">Name</TableHead>
+                          <TableHead className="h-8 text-xs">Definition</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {details!.checkConstraints!.map((ck) => (
+                          <TableRow key={ck.name}>
+                            <TableCell className="py-2 font-mono text-xs">
+                              {ck.name}
+                            </TableCell>
+                            <TableCell className="py-2 font-mono text-xs whitespace-pre-wrap">
+                              {ck.definition}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -5007,6 +5278,7 @@ export default function Workspace({
                   : undefined
               }
               ddlPreview={tableEditDdl(activeTab)}
+              baselineDdl={activeTab.baselineDdl ?? ""}
               canApply={hasExecutableSql(tableEditDdl(activeTab))}
               busy={busy || !connection.permissions.allowDdl}
               onApply={() => void applyTableEdit(activeTab)}
@@ -5078,6 +5350,30 @@ export default function Workspace({
 
       <footer className="relative flex h-8 shrink-0 items-center border-t border-border bg-card px-2 text-[11px]">
         <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span
+            data-testid="connection-health"
+            title={
+              health === "ok"
+                ? "Connection healthy"
+                : health === "bad"
+                  ? "Heartbeat failed — try Reconnect"
+                  : "Checking connection…"
+            }
+            className={cn(
+              "inline-flex items-center gap-1 rounded px-1.5 py-0.5",
+              health === "ok" && "text-emerald-700 dark:text-emerald-300",
+              health === "bad" && "text-destructive",
+              health === "checking" && "text-muted-foreground",
+            )}
+          >
+            <Circle
+              className={cn(
+                "size-2 fill-current",
+                health === "checking" && "opacity-40",
+              )}
+            />
+            {health === "ok" ? "Live" : health === "bad" ? "Down" : "…"}
+          </span>
           {activeTab?.kind === "data" ? (
             <button
               type="button"
@@ -5168,6 +5464,15 @@ export default function Workspace({
         ) : null}
 
         <div className="relative z-10 ml-auto flex max-w-[50%] items-center gap-2">
+          {connection.config.safeMode ? (
+            <span
+              data-testid="safe-mode-badge"
+              className="rounded border border-amber-600/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200"
+              title="Safe mode: write and destructive SQL require confirmation"
+            >
+              Safe mode
+            </span>
+          ) : null}
           <SessionInfoStrip
             connection={connection}
             database={selectedSchema || connection.config.database}
@@ -5310,13 +5615,23 @@ export default function Workspace({
                 <DropdownMenuItem onClick={() => void importJson()}>
                   Import JSON (array of objects)
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void importSqlFile()}>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setDumpMode("restore");
+                    setDumpOpen(true);
+                  }}
+                >
                   Restore / import SQL file
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => void dumpSchema(true)}>
                   Dump all tables to one file…
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setDumpOpen(true)}>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setDumpMode("dump");
+                    setDumpOpen(true);
+                  }}
+                >
                   Dump selected tables…
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => copyViewToSql()}>
@@ -5364,10 +5679,13 @@ export default function Workspace({
         connectionId={connection.id}
         connectionName={connection.name}
         tables={Object.keys(tableKinds).filter((t) => tableKinds[t] !== "view")}
+        initialMode={dumpMode}
         onClose={() => setDumpOpen(false)}
         onDone={(m) => {
           setError("");
           setStatus(m);
+          markRan(connection.id);
+          void loadSchema();
         }}
       />
 

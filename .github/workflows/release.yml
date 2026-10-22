@@ -1,0 +1,69 @@
+# Build installers and attach them to a GitHub Release.
+# Trigger: push tag `v*` (e.g. v0.1.0) or manual workflow_dispatch.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: ""
+          - platform: ubuntu-22.04
+            args: "--bundles appimage,deb"
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "re-dbviewer v__VERSION__"
+          releaseBody: |
+            Download the installer for your OS below.
+
+            - **Linux:** `.AppImage` (or `.deb`)
+            - **Windows:** `.msi` / NSIS setup
+            - **macOS:** `.dmg` / `.app`
+
+            See [docs/USER_GUIDE.md](../blob/main/docs/USER_GUIDE.md) for usage.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

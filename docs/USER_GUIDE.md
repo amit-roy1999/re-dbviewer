@@ -15,7 +15,11 @@ npm install
 npm run tauri dev
 ```
 
-### Linux AppImage
+### Installers (GitHub Releases)
+
+Tagged versions (`v0.1.0`, …) build AppImage/deb, Windows, and macOS installers via GitHub Actions (`.github/workflows/release.yml`). Grab the asset for your OS from the repo’s **Releases** page.
+
+### Linux AppImage (local)
 
 ```bash
 npm run tauri build -- --bundles appimage
@@ -43,11 +47,11 @@ Top of the window:
 
 | Menu | Actions |
 |------|---------|
-| **File** | New Query Tab (`Ctrl+T`), Close Tab (`Ctrl+W`), Open SQL… (`Ctrl+O`), Save (`Ctrl+S`), Save As… (`Ctrl+Shift+S`), Export Result CSV…, Dump Schema SQL…, Dump Selected Tables…, Restore SQL File…, Preferences… (`Ctrl+,`), Reconnect, Disconnect (`Ctrl+Shift+Q`), Exit. **New Window** (`Ctrl+Shift+N`) opens another Home window (all windows share the one live DB session). |
+| **File** | New Query Tab (`Ctrl+T`), Close Tab (`Ctrl+W`), Open SQL… (`Ctrl+O`), Save (`Ctrl+S`), Save As… (`Ctrl+Shift+S`), Export Result… (CSV / Excel / JSON / Markdown / HTML / XML / INSERTs), Dump Schema SQL…, Dump Selected Tables…, Restore SQL File…, Preferences… (`Ctrl+,`), Reconnect, Disconnect (`Ctrl+Shift+Q`), Exit. **New Window** (`Ctrl+Shift+N`) opens another Home window — windows share the single live DB session (not independent backends); use **Reconnect** if the heartbeat shows Down. SQL query tab text is restored per connection after restart. |
 | **Edit** | Format SQL (`Ctrl+Shift+F`), Undo / Redo (editor), Cut / Copy / Paste (act on the last focused editor or text field). |
 | **Query** | Run Script (`Ctrl+Shift+Enter`), Stop, Begin / Commit / Rollback. |
 | **View** | Toggle History, Snippets, Context Help; **Command palette…** (`Ctrl+K` — search app features/menus/settings, not DB rows); Search Data… (`Ctrl+Shift+H`); Inspect Table…; Schema Inspector…; Preferences…; **Keyboard shortcuts…**; Toggle theme. |
-| **Tools** | Server Admin (Workbench Administration), EER Diagram, Schema Compare, Migration Wizard, Fake Data Factory, **Visualize Data**. See [Tools](#tools) and [Administration](#administration). |
+| **Tools** | Server Admin, EER Diagram, Schema Compare, Data Compare, Schema Sync, Migration Wizard, Fake Data Factory, Visualize Data, Visual Query Builder, **Pivot / Crosstab**, **Query Notebook**. Command palette: **AI SQL assist** (Preferences → local templates), **Git: copy add for SQL file**. See [Tools](#tools) and [Administration](#administration). |
 
 `Ctrl+T/W/O/S/Shift+S/Shift+F/K` also work from the keyboard (⌘ on macOS). **View → Keyboard shortcuts…** lists them all (including `Ctrl+Enter`, `Ctrl+Shift+Enter`, `Ctrl+Shift+Q`, `Ctrl+,`, `Ctrl+K`). **Command palette** finds menus, tools, admin views, preferences, and **table/view names** on the front connection (type to filter); it does **not** search row values (use **Search Data** for that).
 
@@ -65,14 +69,27 @@ The home screen lists saved connections.
    - a **connection URL**, or
    - host / port / user / password / database (SQLite: file path + Browse).
 4. Optional **SSL, socket & SSH tunnel** section (server engines):
-   - **SSL mode** + CA / client cert / client key paths (PEM). PostgreSQL uses all three; MySQL/MariaDB uses the CA only (client cert/key are saved but not used).
+   - **SSL mode** + CA / client cert / client key paths (PEM) with **Browse**. PostgreSQL uses all three; MySQL/MariaDB uses the CA only (client cert/key are saved but not used).
    - **Unix socket** — MySQL socket file or PostgreSQL socket directory.
-   - **SSH host / user / port / private key** — opens a tunnel with your system `ssh` (key auth only) and connects through it.
-5. For server engines, optionally check **Store in Vault** (on by default). When the OS keyring works, passwords go there; otherwise they use the encrypted **app vault** (master password, session unlock). Uncheck to not persist the password.
-6. Choose **Allowed actions** (permissions).
-7. **Test**, then **Save**.
+   - **SSH host / user / port / private key** (Browse) — tunnel via system `ssh` (BatchMode). Optional **Prefer ssh-agent** when the key is already loaded.
+5. For server engines, optionally check **Store in Vault** (on by default). See [Password storage](#password-storage).
+6. Optionally enable **Safe mode** — always confirm INSERT / UPDATE / DELETE / DROP / TRUNCATE before running (banner shown in the workspace).
+7. Choose **Allowed actions** (permissions).
+8. **Test**, then **Save**.
 
-Passwords are **never** stored as plaintext in the connections database. Prefer the OS keyring (macOS Keychain / Windows Credential Manager / Linux Secret Service). If the keyring is unavailable, the app prompts for a vault master password and stores ciphertext in an app-data vault file. Use **Clear stored password** on the edit form to remove a saved secret.
+### Password storage
+
+Passwords are **never** stored as plaintext in the connections SQLite database.
+
+| Preference | Behavior |
+|------------|----------|
+| **Store in Vault** checked (default) | Prefer **OS keyring** (macOS Keychain / Windows Credential Manager / Linux Secret Service). If keyring set/get fails, use the encrypted **app vault** (Argon2id + AES-256-GCM file under app data). |
+| **Store in Vault** unchecked | Password is not persisted; re-enter when connecting or editing. |
+
+- Config JSON keeps only flags: `passwordInKeyring` / `passwordInVault` (and `storePassword` on save).
+- When the vault is needed and locked, the app opens an **Unlock / Create password vault** dialog (master password stays in memory for the session).
+- On **Edit**, leave Password blank to keep the current stored secret. **Clear stored password** removes keyring/vault entries for that connection.
+- Legacy plaintext passwords (older builds) migrate into keyring/vault on list or save when possible.
 
 ### Connection URLs
 
@@ -152,6 +169,7 @@ Edit column name / type / nullability / default / PK, see the generated DDL, the
 
 - Write SQL in the CodeMirror editor. Autocomplete knows table names and (for opened / first ~30 tables) column names, using the connection's SQL dialect.
 - **Casing** — keyword autocomplete and **Format** keep the casing you type (they do not force `UPPERCASE`). Table/column names follow what the database reports.
+- **Autocomplete** — tables/views/routines from the schema tree, plus **aliases** (`FROM users u` → `u.`) and simple **CTE** column lists (`WITH t AS (SELECT id, …)`).
 - **Dark mode** — syntax highlighting and the autocomplete popup use high-contrast colors that match the app theme.
 - **Multiple query tabs** — **+** (or `Ctrl+T`) adds *Query N*. Each tab keeps its own SQL text, result, Explain output / view and Analyze setting. Close with **×** or `Ctrl+W`; at least one query tab always stays open.
 - **Run** or **Ctrl/⌘+Enter** — executes the **selection** if there is one, otherwise the **statement under the cursor** (statements are split on `;`). Footer shows rows and duration.
@@ -186,14 +204,13 @@ One statement at a time for permission checks; use **Import SQL file** for multi
 - **Zoom** — `Ctrl/⌘ + +` zoom in, `Ctrl/⌘ + -` zoom out, `Ctrl/⌘ + 0` reset (also under View). Scales the whole UI (50–200%).
 - **Confirm destructive** — with the preference on, running `DROP` / `TRUNCATE` / `DELETE` from the editor (or deleting rows from the grid) asks first.
 - **Run script** (`Script` button, `Ctrl+Shift+Enter`) — runs every statement in the selection (or whole editor), continuing after errors. Results appear as **Result 1..N** tabs under the editor (✓ / ✗ per statement).
-- **Stop** — appears while a query runs; it ignores the late result (the server is not killed).
+- **Stop** — appears while a query runs; ignores the late client result and asks the server to cancel (SQLite interrupt, MySQL/MariaDB `KILL QUERY`, PostgreSQL `pg_cancel_backend`, SQL Server best-effort `KILL` session).
 - **Transactions** — **Begin / Commit / Rollback** in the query toolbar (and Query menu); a `TX` badge shows while one is open. SQL Server uses `BEGIN TRAN`.
 - **Search data** (magnifier in the toolbar, `Ctrl+Shift+H`) — LIKE search over the first text columns of up to 20 tables (5 rows each). Click a table to open it filtered.
 - **Context help** (book icon / View menu) — keyword help for the word under the cursor, with search and *Insert example*.
 - **Autocomplete** tags views and (MySQL / MariaDB) offers stored routines.
-- **Export / copy** — the toolbar download menu and the data-tab gear export results as CSV, JSON, Markdown or SQL INSERTs; grid right-click menus copy rows / all rows in the same formats.
-
-- **JSON cells** — right-click a JSON object/array cell → **View as JSON**.
+- **Export / copy** — the toolbar download menu and the data-tab gear export results as CSV, **Excel (.xlsx)**, JSON, Markdown or SQL INSERTs; grid right-click menus copy rows / all rows in the text formats.
+- **Cell viewers** — right-click JSON → **View as JSON**; binary → **View as hex** / **View as image** (PNG/JPEG/GIF/WebP); WKT/GeoJSON → **View as geometry**.
 - **Pin / compare** — **Pin result** above a query result; later results can **Compare pinned** (column names, row-count difference).
 - **Bookmarks** — the Snippets panel has a *Bookmarks* tab: named SQL per connection, saved locally.
 - **Find in editor** — `Ctrl+F` (find / replace panel).
@@ -209,7 +226,7 @@ One statement at a time for permission checks; use **Import SQL file** for multi
 - **New trigger…** (MySQL / MariaDB only, **+** menu): name, BEFORE / AFTER, INSERT / UPDATE / DELETE, table and body → `CREATE TRIGGER … FOR EACH ROW` (a body with several statements is wrapped in `BEGIN … END`).
 - **Schema inspector** (database icon / View menu): lists tables with row counts — catalog estimates (≈) on MySQL / MariaDB / PostgreSQL, exact `COUNT(*)` for the first 40 tables on SQLite / SQL Server. Click a row to open the table.
 - **New table from template** / **New event** (MySQL / MariaDB only) are in the **+** menu. Templates are a name plus column-defs JSON, stored locally; events take name, schedule (`EVERY 1 DAY`) and body.
-- **Dump / restore** — the database icon next to Entities (or File menu) dumps all tables (schema, optionally data) into one `.sql` file; **Dump selected tables…** (also in File and the data-tab gear) shows a table checklist and dumps only the ticked tables into one file; restore runs a `.sql` file. Gear → **Import CSV (replace all rows)** deletes existing rows first (needs DELETE).
+- **Dump / restore** — File → **Dump Selected Tables…** / **Restore SQL File…** opens a wizard with Dump and Restore tabs, a table checklist, and a **progress bar**. Dump writes schema (± data) for ticked tables into one `.sql` file; Restore runs statements one-by-one (stops on first error). File → **Dump Schema SQL…** still dumps every table without the checklist. Gear → **Import CSV (replace all rows)** deletes existing rows first (needs DELETE).
 
 ---
 
@@ -264,7 +281,7 @@ Open from the sidebar wrench (or double-click a table). Long names truncate; wre
 
 The structure header shows a stats line: **columns · indexes · FKs · rows · size** when available. Row counts are approximate (`~N rows`) from the catalog on MySQL / MariaDB / PostgreSQL / SQL Server; SQLite uses an exact `COUNT(*)`. Size (data + indexes) is shown for MySQL / MariaDB / PostgreSQL; omitted on SQLite / SQL Server.
 
-Structure tab sections:
+Structure tab sections (Columns include a **Generated** expression when the engine reports one; **Checks** lists CHECK constraints on Postgres/MySQL):
 
 - **Columns** — name, type, nullable, default, primary key; filter columns; refresh; export schema SQL.
 - **Indexes** — name, unique, columns.
@@ -301,7 +318,8 @@ Click the **connection name** in the left sidebar (MySQL / MariaDB / PostgreSQL)
 
 Left nav mirrors MySQL Workbench:
 
-- **Management:** Server Status (dashboard), Client Connections (+ Kill), **Query Monitor** (live non-idle queries from other clients + Recent/top statement stats; type filters; auto-refresh on Running; Kill needs DDL), Users and Privileges (Grants / New / Drop), Status and System Variables, Data Export, Data Import/Restore
+- **Management:** Server Status (dashboard), Client Connections (+ Kill), **Query Monitor** (live non-idle queries from other clients + Recent/top statement stats; type filters; auto-refresh on Running; Kill needs DDL), Users and Privileges (Grants / **Revoke all** / **Role tree** / New / Drop), Status and System Variables, Data Export, Data Import/Restore, **PG Extensions / Sequences / Matviews** (PostgreSQL: installed extensions + sequence/matview lists; Entities tree also shows `matview` / `sequence` kinds)
+- **Performance:** Dashboard, Performance Reports, **Wait Events**, **Replication / Topology** (replica/master or `pg_stat_replication`), Performance Schema Setup
 - **Instance:** Startup / Shutdown (info stub — OS service control is out of reach over SQL), Server Logs, Options File (info stub)
 - **Performance:** Dashboard, Performance Reports, Performance Schema Setup (read-only)
 
@@ -313,10 +331,20 @@ Open from the **Tools** menu; they act on the connection tab in front.
 
 - **Server Admin** — opens in-workspace Administration (above).
 - Other tools:
-- **EER Diagram**: reverse engineers tables and foreign keys into a read-only diagram. **Forward engineer → query tab** generates CREATE TABLE / FK / index SQL from the diagram; **Copy SQL** copies it. **Validate** lists tables without a primary key and foreign keys to missing tables; **Export SVG** saves the diagram.
+- **EER Diagram**: reverse engineers tables and foreign keys into a diagram. **Drag** table boxes to rearrange; select a table to **add/remove FKs** in the side panel; **Pending DDL** previews `ALTER TABLE` add/drop FK SQL (open in a query tab to apply). **Forward engineer → query tab** generates CREATE TABLE / FK / index SQL; **Copy SQL** copies it. **Validate** lists tables without a primary key and foreign keys to missing tables; **Export SVG** saves the diagram.
 - **Schema Compare**: compares the current schema (A) with another schema, another saved connection, or a `.sql` file (B) and lists missing tables/columns, type differences and (when B is a schema or connection) index-name and foreign-key-name differences.
+- **Data Compare**: pick tables on this connection (A) and another saved connection (B), choose key columns, and list only-in-A / only-in-B / value differences (capped rows per side).
+- **Schema Sync**: one-way A→B plan — tables missing on B, column conflicts, row-count mismatches (sample); optionally **Push missing tables + data** (uses the migration engine).
 - **Migration Wizard**: choose source and target saved connections, list and tick tables, then create tables and/or copy data in batches. Same-engine pairs copy the source DDL. For different engines, tables are created from mapped column types (editable **Type mapping** rules; only NOT NULL and primary keys carry over). A progress line shows `table i/n, rows copied`. Sessions the wizard opens are closed afterwards.
-- **Visualize Data**: pick a root table, include related tables via the same FK graph as Structure → Relations, run the query (row limit), map columns to a chart (bar / line / area / scatter / pie / heatmap / table), preview with Vega-Lite. **Save…** writes a `.rdbviz.json` recipe (query model + chart; connection name/engine hint only — no passwords) so you can **Open…** later and recreate. **Export Vega-Lite…** writes a portable `.vl.json` with data for other tools.
+- **Visual Query Builder**: pick a root table, include related tables via FKs (same graph as Structure → Relations), choose columns/filters/join type, **Open in query tab**.
+- **Pivot / Crosstab**: run SQL, pick row/column/value fields and aggregation.
+- **Query Notebook**: multi-cell SQL buffer with per-cell / run-all.
+- **Table editor → Review DDL diff**: line diff vs DDL at open. **Rename…** opens dependent-aware SQL preview. Result toolbar → **Print / PDF…**. Preferences: local AI assist + backup reminder hours.
+- **Visualize Data** (Tools menu or command palette):
+  1. **Data** — pick schema/root table; optionally include related tables (same FK graph as Structure → Relations); set row limit; **Run**.
+  2. **Chart** — choose mark (bar / line / area / scatter / pie / heatmap / table) and map columns (searchable encodings; `table.column` aliases for joins). Mapping anatomy shows how fields bind.
+  3. **Preview** — Vega-Lite chart (theme-aware). **Open as tab** moves the tool into a workspace tab (no dialog chrome).
+  - **Save…** → `.rdbviz.json` recipe (query model + chart; connection name/engine hint only — no passwords). **Open…** reloads a recipe. **Export Vega-Lite…** → portable `.vl.json` with embedded data.
 - **Fake Data Factory**: seed tables with synthetic rows (Rust batch inserts).
   1. Check tables on the left (search to filter). **+ related** adds FK parents/children.
   2. Set row counts (presets or per table). Choose **Append** (keeps data; IDs continue after max) or **Clear, then fill** (needs DELETE/DDL; confirms first).
@@ -348,7 +376,7 @@ re-dbviewer writes a **local-only** error log while you use the app. Nothing is 
 ## Limits and known placeholders
 
 - Menu bar, Tools and shortcuts act on the connection tab in front.
-- **Stop** only stops waiting for a query; the server may still finish it (and a long query blocks further commands until it ends).
+- **Stop** cancels the server statement when possible; a long query still blocks other commands on that connection until cancel completes.
 - Routine editor is MySQL / MariaDB only (no triggers; events via New event).
 - SQLite cannot change column type / nullability / default or add / drop foreign keys via ALTER (the editor emits a comment instead).
 - Query-tab SQL is not persisted across app restarts (use Save); history and snippets are.

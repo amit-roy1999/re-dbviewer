@@ -1,0 +1,21 @@
+---
+description: Never attribute commits or PRs to Cursor on GitHub
+alwaysApply: true
+---
+
+# No Cursor git attribution (hard rule)
+
+Cursor must **never** appear as a GitHub contributor on this repo.
+
+## Commits
+- Do **not** add `Co-authored-by: Cursor`, `Made-with: Cursor`, `cursoragent@cursor.com`, or any Cursor/agent trailer.
+- Do **not** use `git commit --trailer` for Cursor/attribution.
+- Commit message = subject + body only, authored as the repo user.
+- If a Cursor trailer is injected after commit, strip it before push (amend only when amend rules allow; otherwise new commit without the trailer / rewrite).
+
+## Pull requests
+- Do **not** put “Made with Cursor”, “Created by Cursor”, or similar footers in PR titles/bodies.
+Prefer `gh pr create --body-file` over inline `--body` when creating PRs.
+
+## Reminder
+CLI/project attribution is disabled (`.cursor/cli.json` + `~/.cursor/cli-config.json`). A `commit-msg` hook strips Cursor trailers as a backstop.

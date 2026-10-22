@@ -24,6 +24,16 @@ pub struct ColumnInfo {
     pub nullable: bool,
     pub default_value: Option<String>,
     pub is_pk: bool,
+    /// Generation expression when the column is generated/stored/virtual.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckConstraintInfo {
+    pub name: String,
+    pub definition: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,6 +59,8 @@ pub struct TableDetails {
     pub columns: Vec<ColumnInfo>,
     pub foreign_keys: Vec<ForeignKeyInfo>,
     pub indexes: Vec<IndexInfo>,
+    #[serde(default)]
+    pub check_constraints: Vec<CheckConstraintInfo>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

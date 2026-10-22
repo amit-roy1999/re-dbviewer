@@ -22,6 +22,10 @@ export type ConnectionConfig = {
   passwordInVault?: boolean;
   /** When false on save, clear any stored password (default true). */
   storePassword?: boolean;
+  /** Production-safe: always confirm destructive / write SQL. */
+  safeMode?: boolean;
+  /** Prefer keys from ssh-agent (BatchMode; key must already be loaded). */
+  sshUseAgent?: boolean;
 };
 
 export type VaultStatus = {
@@ -74,6 +78,13 @@ export type ColumnInfo = {
   nullable: boolean;
   defaultValue: string | null;
   isPk: boolean;
+  /** Present when the column is generated (expression or engine EXTRA). */
+  generated?: string | null;
+};
+
+export type CheckConstraintInfo = {
+  name: string;
+  definition: string;
 };
 
 export type ForeignKeyInfo = {
@@ -93,6 +104,7 @@ export type TableDetails = {
   columns: ColumnInfo[];
   foreignKeys: ForeignKeyInfo[];
   indexes: IndexInfo[];
+  checkConstraints?: CheckConstraintInfo[];
 };
 
 export type FilterOp =

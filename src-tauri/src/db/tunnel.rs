@@ -57,8 +57,15 @@ pub fn maybe_tunnel(
             "-o",
             "StrictHostKeyChecking=accept-new",
         ]);
+    if config.ssh_use_agent {
+        // Allow agent identities; still BatchMode so we never hang on a password prompt.
+        cmd.args(["-o", "IdentitiesOnly=no"]);
+    }
     if let Some(k) = config.ssh_key_path.as_deref().filter(|k| !k.trim().is_empty()) {
         cmd.arg("-i").arg(k.trim());
+        if config.ssh_use_agent {
+            cmd.args(["-o", "IdentitiesOnly=yes"]);
+        }
     }
     cmd.arg(target)
         .stdin(Stdio::null())

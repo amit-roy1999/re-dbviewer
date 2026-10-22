@@ -9,7 +9,9 @@ export type AdminTab =
   | "serverStatus"
   | "perfSchemaSetup"
   | "queryMonitorRunning"
-  | "queryMonitorRecent";
+  | "queryMonitorRecent"
+  | "waitEvents"
+  | "replication";
 
 /** Bucket for Query Monitor type filter chips. */
 export type QueryTypeFilter = "all" | "select" | "dml" | "ddl" | "other";
@@ -125,6 +127,28 @@ export function adminSql(engine: string, tab: AdminTab): string[] {
           ? `SELECT LEFT(digest_text, 200) AS statement, schema_name AS db_schema, count_star AS calls, ROUND(sum_timer_wait/1000000000000,3) AS total_s, ROUND(avg_timer_wait/1000000000000,6) AS avg_s, sum_rows_examined AS rows_examined, UPPER(SUBSTRING_INDEX(TRIM(digest_text), ' ', 1)) AS query_type FROM performance_schema.events_statements_summary_by_digest WHERE digest_text IS NOT NULL ORDER BY sum_timer_wait DESC LIMIT 50`
           : `SELECT left(query, 200)::text AS statement, calls::text AS calls, round(total_exec_time::numeric, 1)::text AS total_ms, round(mean_exec_time::numeric, 2)::text AS avg_ms, rows::text AS rows, upper(split_part(trim(query), ' ', 1)) AS query_type FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 50`,
       ];
+    case "waitEvents":
+      return my
+        ? [
+            `SELECT EVENT_NAME AS wait_event, COUNT_STAR AS waits, ROUND(SUM_TIMER_WAIT/1000000000000,3) AS wait_s FROM performance_schema.events_waits_summary_global_by_event_name WHERE COUNT_STAR > 0 ORDER BY SUM_TIMER_WAIT DESC LIMIT 40`,
+            `SELECT OBJECT_TYPE, OBJECT_SCHEMA, OBJECT_NAME, COUNT_STAR AS waits, ROUND(SUM_TIMER_WAIT/1000000000000,3) AS wait_s FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA NOT IN (${MYSQL_SYS}) ORDER BY SUM_TIMER_WAIT DESC LIMIT 25`,
+          ]
+        : [
+            `SELECT coalesce(wait_event_type,'(none)')::text AS wait_event_type, coalesce(wait_event,'(none)')::text AS wait_event, count(*)::text AS sessions FROM pg_stat_activity WHERE pid <> pg_backend_pid() GROUP BY 1,2 ORDER BY count(*) DESC`,
+            `SELECT wait_event_type::text AS wait_event_type, wait_event::text AS wait_event, state::text AS state, left(query, 200)::text AS query FROM pg_stat_activity WHERE wait_event IS NOT NULL AND pid <> pg_backend_pid() ORDER BY query_start NULLS LAST LIMIT 40`,
+          ];
+    case "replication":
+      return my
+        ? [
+            "SHOW REPLICA STATUS",
+            "SHOW MASTER STATUS",
+            "SELECT CHANNEL_NAME, SERVICE_STATE, LAST_ERROR_MESSAGE FROM performance_schema.replication_connection_status",
+          ]
+        : [
+            "SELECT pid::text AS pid, usename::text AS usename, application_name::text AS application_name, client_addr::text AS client_addr, state::text AS state, sync_state::text AS sync_state, replay_lag::text AS replay_lag FROM pg_stat_replication",
+            "SELECT slot_name::text AS slot_name, plugin::text AS plugin, slot_type::text AS slot_type, active::text AS active FROM pg_replication_slots",
+            "SELECT pg_is_in_recovery()::text AS in_recovery, pg_last_wal_receive_lsn()::text AS receive_lsn, pg_last_wal_replay_lsn()::text AS replay_lsn",
+          ];
   }
 }
 
@@ -140,6 +164,31 @@ export function dropUserSql(engine: string, user: string, host?: string): string
   return isMysqlFamily(engine)
     ? `DROP USER ${sqlStr(user)}@${sqlStr(host ?? "%")}`
     : `DROP USER "${user.split('"').join('""')}"`;
+}
+
+/** Revoke all privileges on *.* / PUBLIC tables (lite). */
+export function revokeAllSql(
+  engine: string,
+  user: string,
+  host?: string,
+): string {
+  if (isMysqlFamily(engine)) {
+    const acct = `${sqlStr(user)}@${sqlStr(host ?? "%")}`;
+    return `REVOKE ALL PRIVILEGES, GRANT OPTION FROM ${acct}`;
+  }
+  const ident = `"${user.split('"').join('""')}"`;
+  return `REVOKE ALL ON SCHEMA public FROM ${ident};\nREVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${ident}`;
+}
+
+/** Role membership tree (Postgres) or privilege summary (MySQL). */
+export function roleTreeSql(engine: string): string {
+  return isMysqlFamily(engine)
+    ? `SELECT GRANTEE, TABLE_SCHEMA, PRIVILEGE_TYPE FROM information_schema.SCHEMA_PRIVILEGES ORDER BY GRANTEE, TABLE_SCHEMA, PRIVILEGE_TYPE LIMIT 500`
+    : `SELECT r.rolname::text AS role, m.rolname::text AS member_of
+       FROM pg_auth_members am
+       JOIN pg_roles r ON r.oid = am.member
+       JOIN pg_roles m ON m.oid = am.roleid
+       ORDER BY 1, 2`;
 }
 
 export function createUserSql(

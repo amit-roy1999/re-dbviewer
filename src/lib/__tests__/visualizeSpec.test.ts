@@ -121,4 +121,34 @@ describe("visualizeSpec", () => {
       y: { field: "order_items\\.amount", title: "order_items.amount" },
     });
   });
+
+  it("buildVegaLiteSpec scatter uses size encoding when set", () => {
+    const values = [{ x: 1, y: 2, s: 10 }];
+    const spec = buildVegaLiteSpec(
+      {
+        mark: "point",
+        encoding: { x: "x", y: "y", color: null, size: "s" },
+      },
+      values,
+    );
+    expect(spec?.mark).toMatchObject({ type: "point", filled: true });
+    expect(spec?.encoding).toMatchObject({
+      size: { field: "s" },
+    });
+  });
+
+  it("buildVegaLiteSpec heatmap uses rect mark", () => {
+    const values = [{ a: "x", b: "y", n: 3 }];
+    const spec = buildVegaLiteSpec(
+      {
+        mark: "rect",
+        encoding: { x: "a", y: "b", color: "n", size: null },
+      },
+      values,
+    );
+    expect(spec?.mark).toBe("rect");
+    expect(spec?.encoding).toMatchObject({
+      color: { field: "n" },
+    });
+  });
 });

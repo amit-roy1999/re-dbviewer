@@ -26,6 +26,20 @@ fn make_config(config: &ConnectionConfig) -> Config {
 
 pub type MssqlClient = Client<Compat<TcpStream>>;
 
+/// Session id (@@SPID) for best-effort KILL from a side connection.
+pub async fn session_spid(client: &mut MssqlClient) -> Result<u32, String> {
+    let stream = client
+        .simple_query("SELECT CAST(@@SPID AS INT) AS spid")
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<Row> = stream.into_first_result().await.map_err(|e| e.to_string())?;
+    let spid: i32 = rows
+        .first()
+        .and_then(|r| r.get(0))
+        .ok_or_else(|| "@@SPID returned no row".to_string())?;
+    Ok(spid as u32)
+}
+
 pub async fn connect(config: &ConnectionConfig) -> Result<MssqlClient, String> {
     let cfg = make_config(config);
     let tcp = TcpStream::connect(cfg.get_addr())
@@ -156,6 +170,7 @@ pub async fn describe_table(
                 .eq_ignore_ascii_case("YES"),
             default_value: r.get::<&str, _>(3).map(|s| s.to_string()),
             is_pk: r.get::<i32, _>(4).unwrap_or(0) != 0,
+            generated: None,
         })
         .collect();
 
@@ -230,6 +245,7 @@ pub async fn describe_table(
         columns,
         foreign_keys,
         indexes,
+        check_constraints: vec![],
     })
 }
 

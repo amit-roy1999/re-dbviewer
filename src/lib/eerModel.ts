@@ -189,3 +189,60 @@ export function validateModel(model: EerModel): string[] {
   }
   return out;
 }
+
+export function fkKey(tableRef: string, fk: ForeignKeyInfo): string {
+  return `${tableRef}\0${fk.name}\0${fk.columns.join(",")}\0${fk.refTable}\0${fk.refColumns.join(",")}`;
+}
+
+function allFkKeys(model: EerModel): Map<string, { table: EerTable; fk: ForeignKeyInfo }> {
+  const m = new Map<string, { table: EerTable; fk: ForeignKeyInfo }>();
+  for (const t of model.tables) {
+    for (const fk of t.details.foreignKeys) {
+      m.set(fkKey(t.ref, fk), { table: t, fk });
+    }
+  }
+  return m;
+}
+
+export function dropFkSql(engine: string, tableRef: string, fk: ForeignKeyInfo): string {
+  const q = (s: string) => quoteIdent(engine, s);
+  const name = fk.name || `fk_${shortName(tableRef)}_${fk.columns.join("_")}`;
+  if (engine === "mysql" || engine === "mariadb") {
+    return `ALTER TABLE ${q(tableRef)} DROP FOREIGN KEY ${q(name)};`;
+  }
+  if (engine === "mssql") {
+    return `ALTER TABLE ${q(tableRef)} DROP CONSTRAINT ${q(name)};`;
+  }
+  if (engine === "sqlite") {
+    return `-- SQLite: recreate ${tableRef} without FK ${name} (not auto-generated)`;
+  }
+  return `ALTER TABLE ${q(tableRef)} DROP CONSTRAINT ${q(name)};`;
+}
+
+export function addFkSql(engine: string, tableRef: string, fk: ForeignKeyInfo): string {
+  const q = (s: string) => quoteIdent(engine, s);
+  const name = fk.name || `fk_${shortName(tableRef)}_${fk.columns.join("_")}`;
+  const body = `FOREIGN KEY (${fk.columns.map(q).join(", ")}) REFERENCES ${q(fk.refTable)} (${fk.refColumns.map(q).join(", ")})`;
+  if (engine === "sqlite") {
+    return `-- SQLite: recreate ${tableRef} with ${body} (not auto-generated)`;
+  }
+  return `ALTER TABLE ${q(tableRef)} ADD CONSTRAINT ${q(name)} ${body};`;
+}
+
+/** DDL for FKs added/removed vs a baseline snapshot (deep-copied FKs at load). */
+export function pendingFkDdl(baseline: EerModel, current: EerModel): string {
+  const before = allFkKeys(baseline);
+  const after = allFkKeys(current);
+  const lines: string[] = ["-- Pending FK changes from EER edit"];
+  for (const [k, { table, fk }] of before) {
+    if (!after.has(k)) lines.push(dropFkSql(current.engine, table.ref, fk));
+  }
+  for (const [k, { table, fk }] of after) {
+    if (!before.has(k)) lines.push(addFkSql(current.engine, table.ref, fk));
+  }
+  return lines.length > 1 ? lines.join("\n") + "\n" : "";
+}
+
+export function cloneEerModel(model: EerModel): EerModel {
+  return structuredClone(model);
+}

@@ -482,6 +482,15 @@ fn run_sql(
     state.session.run_sql_on(connection_id.as_deref(), &sql)
 }
 
+/// Best-effort cancel of the in-flight query (SQLite interrupt / KILL QUERY / pg_cancel_backend).
+#[tauri::command]
+fn cancel_query(
+    state: State<'_, AppState>,
+    connection_id: Option<String>,
+) -> Result<String, String> {
+    state.session.cancel_query_on(connection_id.as_deref())
+}
+
 #[tauri::command]
 fn generate_fake_data(
     state: State<'_, AppState>,
@@ -575,6 +584,11 @@ fn write_text_file(path: String, contents: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn write_bytes_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn append_log(level: String, message: String) -> Result<(), String> {
     diagnostics::append(&level, &message)
 }
@@ -632,6 +646,7 @@ pub fn run() {
             describe_table,
             preview_table,
             run_sql,
+            cancel_query,
             generate_fake_data,
             export_table_csv,
             export_table_sql,
@@ -639,6 +654,7 @@ pub fn run() {
             run_sql_script,
             read_text_file,
             write_text_file,
+            write_bytes_file,
             write_clipboard,
             read_clipboard,
             append_log,

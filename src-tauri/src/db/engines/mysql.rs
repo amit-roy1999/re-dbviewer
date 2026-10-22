@@ -106,9 +106,18 @@ pub async fn describe_table(
         db.unwrap_or_else(|| "re_dbviewer".into())
     };
 
-    let col_rows: Vec<(String, String, String, Option<String>, String)> = conn
+    let col_rows: Vec<(
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+    )> = conn
         .exec(
-            "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY
+            "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY,
+                    EXTRA, GENERATION_EXPRESSION
              FROM information_schema.COLUMNS
              WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
              ORDER BY ORDINAL_POSITION",
@@ -119,12 +128,23 @@ pub async fn describe_table(
 
     let columns = col_rows
         .into_iter()
-        .map(|(n, t, nullable, def, key)| ColumnInfo {
-            name: n,
-            data_type: t,
-            nullable: nullable.eq_ignore_ascii_case("YES"),
-            default_value: def,
-            is_pk: key == "PRI",
+        .map(|(n, t, nullable, def, key, extra, gen)| {
+            let generated = if extra.to_ascii_lowercase().contains("generated") {
+                Some(
+                    gen.filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| extra.clone()),
+                )
+            } else {
+                None
+            };
+            ColumnInfo {
+                name: n,
+                data_type: t,
+                nullable: nullable.eq_ignore_ascii_case("YES"),
+                default_value: def,
+                is_pk: key == "PRI",
+                generated,
+            }
         })
         .collect();
 
@@ -178,10 +198,33 @@ pub async fn describe_table(
         }
     }
 
+    let check_rows: Vec<(String, String)> = conn
+        .exec(
+            "SELECT cc.CONSTRAINT_NAME, cc.CHECK_CLAUSE
+             FROM information_schema.CHECK_CONSTRAINTS cc
+             JOIN information_schema.TABLE_CONSTRAINTS tc
+               ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+              AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+             WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ?
+               AND tc.CONSTRAINT_TYPE = 'CHECK'
+             ORDER BY cc.CONSTRAINT_NAME",
+            (schema.as_str(), name),
+        )
+        .await
+        .unwrap_or_default();
+    let check_constraints = check_rows
+        .into_iter()
+        .map(|(n, d)| super::super::types::CheckConstraintInfo {
+            name: n,
+            definition: d,
+        })
+        .collect();
+
     Ok(TableDetails {
         columns,
         foreign_keys,
         indexes,
+        check_constraints,
     })
 }
 
