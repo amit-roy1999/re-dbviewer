@@ -57,13 +57,22 @@ jobs:
           tagName: v__VERSION__
           releaseName: "re-dbviewer v__VERSION__"
           releaseBody: |
-            Download the installer for your OS below.
+            ## re-dbviewer v__VERSION__
 
-            - **Linux:** `.AppImage` (or `.deb`)
-            - **Windows:** `.msi` / NSIS setup
-            - **macOS:** `.dmg` / `.app`
+            Prebuilt installers for Linux, Windows, and macOS (built by this workflow).
 
-            See [docs/USER_GUIDE.md](../blob/main/docs/USER_GUIDE.md) for usage.
+            | Platform | Asset |
+            |----------|--------|
+            | **Linux** | `.AppImage` or `.deb` |
+            | **Windows** | NSIS `.exe` / `.msi` |
+            | **macOS** | `.dmg` |
+
+            ### Highlights
+            - Multi-engine SQL workbench (SQLite, PostgreSQL, MySQL/MariaDB, SQL Server)
+            - Relation builder, Visualize Data, Visual Query Builder, Search Data
+            - FK navigate/peek, vault/keyring passwords, safe mode, admin tools
+
+            Full notes: [docs/RELEASE_NOTES_v0.1.0.md](https://github.com/amit-roy1999/re-dbviewer/blob/main/docs/RELEASE_NOTES_v0.1.0.md) · [User guide](https://github.com/amit-roy1999/re-dbviewer/blob/main/docs/USER_GUIDE.md)
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
