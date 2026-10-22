@@ -1,5 +1,15 @@
-import { memo, useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, KeyRound, X } from "lucide-react";
+import { Fragment, memo, useEffect, useRef, useState } from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Check,
+  ExternalLink,
+  KeyRound,
+  Link2,
+  PanelBottom,
+  X,
+} from "lucide-react";
 import {
   Table,
   TableBody,
@@ -8,7 +18,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { ColumnInfo, QueryResult, TableSort } from "@/types";
+import type {
+  ColumnInfo,
+  ForeignKeyInfo,
+  QueryResult,
+  TableFilter,
+  TableSort,
+} from "@/types";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
 import {
@@ -27,7 +43,9 @@ import {
   bytesToImageDataUrl,
   classifyCellPreview,
 } from "@/lib/cellPreview";
+import { formatCellDisplay, formatCellPreview } from "@/lib/cellFormat";
 import { classifyGeo } from "@/lib/geoPreview";
+import { fkForColumn, fkTargetFromRow } from "@/lib/fkNavigate";
 
 type Props = {
   result: QueryResult;
@@ -49,6 +67,21 @@ type Props = {
   onSelectionChange?: (rowIndexes: number[]) => void;
   /** Table + engine used for "Copy as INSERTs". */
   exportContext?: { table: string; engine: string };
+  /** Outbound FKs for navigate / peek actions on FK cells. */
+  foreignKeys?: ForeignKeyInfo[];
+  onOpenReferenced?: (table: string, filters: TableFilter[]) => void;
+  onLoadReferenced?: (
+    table: string,
+    filters: TableFilter[],
+  ) => Promise<QueryResult>;
+};
+
+type FkPeekState = {
+  rowIndex: number;
+  table: string;
+  result: QueryResult | null;
+  error: string | null;
+  loading: boolean;
 };
 
 type CellEditState = {
@@ -87,8 +120,7 @@ function metaFor(columnsMeta: ColumnInfo[] | null | undefined, name: string) {
 }
 
 function cellToText(value: unknown) {
-  if (value === null || value === undefined) return "";
-  return typeof value === "object" ? JSON.stringify(value) : String(value);
+  return formatCellDisplay(value);
 }
 
 /** Pretty-printed JSON when the cell is a JSON object/array (string or already parsed), else null. */
@@ -144,10 +176,12 @@ function ResultGridInner({
   selectedRowIndexes = [],
   onSelectionChange,
   exportContext,
+  foreignKeys = [],
+  onOpenReferenced,
+  onLoadReferenced,
 }: Props) {
-  const cols = result.columns
-    .map((name, index) => ({ name, index }))
-    .filter((c) => !hiddenColumns.includes(c.name));
+  const allCols = result.columns.map((name, index) => ({ name, index }));
+  const cols = allCols.filter((c) => !hiddenColumns.includes(c.name));
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [editingCell, setEditingCell] = useState<CellEditState | null>(null);
   const [anchorRow, setAnchorRow] = useState<number | null>(null);
@@ -155,6 +189,69 @@ function ResultGridInner({
   const [hexView, setHexView] = useState<string | null>(null);
   const [imageView, setImageView] = useState<string | null>(null);
   const [geoView, setGeoView] = useState<string | null>(null);
+  const [fkPeek, setFkPeek] = useState<FkPeekState | null>(null);
+  const peekGen = useRef(0);
+  const peekScope = exportContext?.table ?? "";
+
+  const closeFkPeek = () => {
+    peekGen.current += 1;
+    setFkPeek(null);
+  };
+
+  // Drop peek when switching tables or pages (grid remount key also resets on table).
+  useEffect(() => {
+    closeFkPeek();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional scope/page only
+  }, [peekScope, offset]);
+
+  const resolveFkTarget = (columnName: string, row: unknown[]) => {
+    const fk = fkForColumn(foreignKeys, columnName);
+    if (!fk) return null;
+    return fkTargetFromRow(fk, allCols, row);
+  };
+
+  const openReferenced = (columnName: string, row: unknown[]) => {
+    const target = resolveFkTarget(columnName, row);
+    if (!target || !onOpenReferenced) return;
+    closeFkPeek();
+    onOpenReferenced(target.table, target.filters);
+    setContextMenu(null);
+  };
+
+  const peekReferenced = (rowIndex: number, columnName: string, row: unknown[]) => {
+    const target = resolveFkTarget(columnName, row);
+    if (!target || !onLoadReferenced) return;
+    setContextMenu(null);
+    const gen = (peekGen.current += 1);
+    setFkPeek({
+      rowIndex,
+      table: target.table,
+      result: null,
+      error: null,
+      loading: true,
+    });
+    void onLoadReferenced(target.table, target.filters)
+      .then((res) => {
+        if (peekGen.current !== gen) return;
+        setFkPeek({
+          rowIndex,
+          table: target.table,
+          result: res,
+          error: null,
+          loading: false,
+        });
+      })
+      .catch((err: unknown) => {
+        if (peekGen.current !== gen) return;
+        setFkPeek({
+          rowIndex,
+          table: target.table,
+          result: null,
+          error: err instanceof Error ? err.message : String(err),
+          loading: false,
+        });
+      });
+  };
 
   const selectRows = (next: number[]) => {
     const deduped = [...new Set(next)].sort((a, b) => a - b);
@@ -249,7 +346,7 @@ function ResultGridInner({
     setEditingCell({
       rowIndex,
       columnName,
-      value: value === null || value === undefined ? "" : String(value),
+      value: value === null || value === undefined ? "" : formatCellDisplay(value),
     });
     setContextMenu(null);
   };
@@ -264,7 +361,23 @@ function ResultGridInner({
     if (value === null || value === undefined) {
       return <span className="italic text-muted-foreground">NULL</span>;
     }
-    return String(value);
+    if (typeof value === "boolean") {
+      return (
+        <span className="font-mono text-xs text-muted-foreground">
+          {value ? "true" : "false"}
+        </span>
+      );
+    }
+    if (typeof value === "number") {
+      return (
+        <span className="font-mono tabular-nums">{formatCellDisplay(value)}</span>
+      );
+    }
+    const text = formatCellPreview(value);
+    if (typeof value === "string" && value.startsWith("<blob ")) {
+      return <span className="italic text-muted-foreground">{text}</span>;
+    }
+    return text;
   };
 
   return (
@@ -308,6 +421,13 @@ function ResultGridInner({
                     {meta?.isPk ? (
                       <KeyRound className="size-3 text-amber-500" />
                     ) : null}
+                    {fkForColumn(foreignKeys, c.name) ? (
+                      <span
+                        title={`FK → ${fkForColumn(foreignKeys, c.name)?.refTable}`}
+                      >
+                        <Link2 className="size-3 text-sky-500" aria-hidden />
+                      </span>
+                    ) : null}
                     {onSort ? (
                       active ? (
                         sort?.desc ? (
@@ -329,8 +449,8 @@ function ResultGridInner({
           {result.rows.map((row, i) => {
             const isActive = isSelected(i);
             return (
+              <Fragment key={i}>
               <TableRow
-                key={i}
                 aria-selected={isActive}
                 className={cn(
                   "select-none hover:bg-muted/40",
@@ -363,11 +483,16 @@ function ResultGridInner({
                 const queued = cellOverride?.(i, c.name);
                 const isEditing =
                   editingCell?.rowIndex === i && editingCell.columnName === c.name;
+                const fk = fkForColumn(foreignKeys, c.name);
+                const fkTarget =
+                  fk && !isEditing ? resolveFkTarget(c.name, row) : null;
+                const showFkActions =
+                  !!fkTarget && (!!onOpenReferenced || !!onLoadReferenced);
                 return (
                   <TableCell
                     key={`${i}-${c.name}`}
                     className={cn(
-                      "max-w-80 truncate border-b border-border/60 px-3 py-1.5 font-mono text-xs",
+                      "group/fk relative max-w-80 border-b border-border/60 px-3 py-1.5 font-mono text-xs",
                       isActive && "bg-primary/15",
                       queued !== undefined && "bg-amber-500/25",
                     )}
@@ -410,12 +535,132 @@ function ResultGridInner({
                         }}
                       />
                     ) : (
-                      renderCellValue(queued ?? cell)
+                      <div className="flex min-w-0 items-center gap-1">
+                        <span className="min-w-0 flex-1 truncate">
+                          {renderCellValue(queued ?? cell)}
+                        </span>
+                        {showFkActions ? (
+                          <span
+                            className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 gap-0.5 rounded border border-border bg-popover p-0.5 opacity-0 shadow-sm group-hover/fk:pointer-events-auto group-hover/fk:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {onOpenReferenced ? (
+                              <button
+                                type="button"
+                                data-testid="fk-open-referenced"
+                                className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                title="Open referenced table"
+                                aria-label="Open referenced table"
+                                onClick={(e) => {
+                                  e.currentTarget.blur();
+                                  openReferenced(c.name, row);
+                                }}
+                              >
+                                <ExternalLink className="size-3.5" />
+                              </button>
+                            ) : null}
+                            {onLoadReferenced ? (
+                              <button
+                                type="button"
+                                data-testid="fk-peek-referenced"
+                                className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                title="Peek referenced row"
+                                aria-label="Peek referenced row"
+                                onClick={(e) => {
+                                  e.currentTarget.blur();
+                                  peekReferenced(i, c.name, row);
+                                }}
+                              >
+                                <PanelBottom className="size-3.5" />
+                              </button>
+                            ) : null}
+                          </span>
+                        ) : null}
+                      </div>
                     )}
                   </TableCell>
                 );
               })}
               </TableRow>
+              {fkPeek?.rowIndex === i ? (
+                <TableRow
+                  data-testid="fk-peek-row"
+                  className="bg-muted/40 hover:bg-muted/40"
+                >
+                  <TableCell
+                    colSpan={cols.length + 1}
+                    className="border-b border-border/60 px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between gap-2 pb-2">
+                      <span className="font-mono text-xs text-muted-foreground">
+                        Referenced ·{" "}
+                        <span className="text-foreground">{fkPeek.table}</span>
+                        {fkPeek.loading ? " · Loading…" : null}
+                      </span>
+                      <button
+                        type="button"
+                        data-testid="fk-peek-close"
+                        className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        aria-label="Close peek"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          closeFkPeek();
+                        }}
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </div>
+                    {fkPeek.error ? (
+                      <p className="text-xs text-destructive">{fkPeek.error}</p>
+                    ) : null}
+                    {fkPeek.result && fkPeek.result.rows.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No matching rows.</p>
+                    ) : null}
+                    {fkPeek.result && fkPeek.result.rows.length > 0 ? (
+                      <div className="max-h-48 overflow-auto rounded border border-border bg-background">
+                        <table className="w-full border-collapse text-left">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              {fkPeek.result.columns.map((name) => (
+                                <th
+                                  key={name}
+                                  className="px-2 py-1 font-mono text-[10px] font-medium text-muted-foreground"
+                                >
+                                  {name}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {fkPeek.result.rows.map((peekRow, ri) => (
+                              <tr
+                                key={ri}
+                                className="border-b border-border/40 last:border-0"
+                              >
+                                {fkPeek.result!.columns.map((_, ci) => (
+                                  <td
+                                    key={ci}
+                                    className="max-w-48 truncate px-2 py-1 font-mono text-[11px]"
+                                  >
+                                    {peekRow[ci] == null ? (
+                                      <span className="italic text-muted-foreground">
+                                        NULL
+                                      </span>
+                                    ) : (
+                                      formatCellPreview(peekRow[ci], 80)
+                                    )}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null}
+                  </TableCell>
+                </TableRow>
+              ) : null}
+              </Fragment>
             );
           })}
           {draftRow ? (
@@ -566,6 +811,34 @@ function ResultGridInner({
                   onClick={() => promptCellEdit(contextMenu.rowIndex, contextMenu.columnName, contextMenu.value)}
                 >
                   Edit cell
+                </button>
+              ) : null}
+              {resolveFkTarget(contextMenu.columnName, contextMenu.row) &&
+              onOpenReferenced ? (
+                <button
+                  type="button"
+                  className="flex w-full items-center rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+                  onClick={() =>
+                    openReferenced(contextMenu.columnName, contextMenu.row)
+                  }
+                >
+                  Open referenced table
+                </button>
+              ) : null}
+              {resolveFkTarget(contextMenu.columnName, contextMenu.row) &&
+              onLoadReferenced ? (
+                <button
+                  type="button"
+                  className="flex w-full items-center rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+                  onClick={() =>
+                    peekReferenced(
+                      contextMenu.rowIndex,
+                      contextMenu.columnName,
+                      contextMenu.row,
+                    )
+                  }
+                >
+                  Peek referenced row
                 </button>
               ) : null}
               {exportButtons(result.rows, "all rows")}

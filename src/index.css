@@ -162,10 +162,14 @@
   color: var(--muted-foreground) !important;
 }
 .dark .cm-editor {
-  background: var(--card);
+  background: #0a0c10;
+}
+.dark .cm-scroller,
+.dark .cm-content {
+  background: #0a0c10;
 }
 .dark .cm-gutters {
-  background: var(--sidebar);
+  background: #050608;
   border-color: var(--border);
   color: var(--muted-foreground);
 }

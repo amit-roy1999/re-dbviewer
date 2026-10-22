@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import type { QueryResult } from "@/types";
+import { formatCellDisplay } from "@/lib/cellFormat";
 
 /** Build an .xlsx ArrayBuffer from a query result (SheetJS). */
 export function resultToXlsxBuffer(result: QueryResult, sheetName = "Sheet1"): ArrayBuffer {
@@ -7,12 +8,13 @@ export function resultToXlsxBuffer(result: QueryResult, sheetName = "Sheet1"): A
     const o: Record<string, unknown> = {};
     result.columns.forEach((c, i) => {
       const v = row[i];
-      o[c] =
-        v === null || v === undefined
-          ? ""
-          : typeof v === "object"
-            ? JSON.stringify(v)
-            : v;
+      if (v === null || v === undefined) {
+        o[c] = "";
+      } else if (typeof v === "number" || typeof v === "boolean") {
+        o[c] = v;
+      } else {
+        o[c] = formatCellDisplay(v);
+      }
     });
     return o;
   });

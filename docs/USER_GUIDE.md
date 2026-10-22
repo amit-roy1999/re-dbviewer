@@ -256,6 +256,7 @@ Click a column header: ascending → descending → unsorted.
 ### Grid
 
 - Row numbers; types and key icons in headers when metadata is loaded.
+- **Foreign keys:** FK columns show a link icon. Hover a non-null FK cell for **Open referenced table** (opens that table with a matching filter) or **Peek referenced row** (expands the related row(s) under the current row). Same actions are on the cell context menu.
 - **Hide columns** via Settings → Hide columns.
 - **Inline edit:** change a cell (needs UPDATE + a primary key for WHERE).
 - **Add row:** footer **+** opens an editable draft row. **✓** or Enter saves; **✕** or Esc (or footer **✕**) cancels.

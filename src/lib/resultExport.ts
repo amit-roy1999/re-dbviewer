@@ -1,4 +1,5 @@
 import type { QueryResult } from "@/types";
+import { formatCellDisplay } from "@/lib/cellFormat";
 
 export type ExportFormat =
   | "csv"
@@ -32,8 +33,7 @@ function escXml(s: string): string {
 }
 
 function cellStr(v: unknown): string {
-  if (v === null || v === undefined) return "";
-  return typeof v === "object" ? JSON.stringify(v) : String(v);
+  return formatCellDisplay(v);
 }
 
 export function resultToHtml(result: QueryResult): string {
@@ -78,9 +78,7 @@ export function resultToJson(result: QueryResult): string {
 }
 
 function mdCell(v: unknown): string {
-  if (v === null || v === undefined) return "";
-  const s = typeof v === "object" ? JSON.stringify(v) : String(v);
-  return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  return formatCellDisplay(v).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
 export function resultToMarkdown(result: QueryResult): string {
@@ -97,7 +95,7 @@ function sqlValue(v: unknown): string {
   if (v === null || v === undefined) return "NULL";
   if (typeof v === "number") return Number.isFinite(v) ? String(v) : "NULL";
   if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
-  const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+  const s = formatCellDisplay(v);
   return `'${s.replace(/'/g, "''")}'`;
 }
 

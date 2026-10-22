@@ -7,12 +7,12 @@ describe("theme", () => {
     document.documentElement.classList.remove("dark");
   });
 
-  it("defaults to light and toggles", () => {
-    expect(getStoredTheme()).toBe("light");
-    expect(toggleTheme()).toBe("dark");
-    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  it("defaults to dark and toggles", () => {
     expect(getStoredTheme()).toBe("dark");
-    applyTheme("light");
+    expect(toggleTheme()).toBe("light");
     expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(getStoredTheme()).toBe("light");
+    applyTheme("dark");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
   });
 });

@@ -9,7 +9,7 @@ import {
 } from "@/lib/theme";
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
 
   useEffect(() => {
     const t = getStoredTheme();

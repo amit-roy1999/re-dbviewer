@@ -308,16 +308,48 @@ pub async fn run_sql(conn: &mut mysql_async::Conn, sql: &str) -> Result<QueryRes
     }
 }
 
+fn mysql_value_to_json(v: &Value) -> serde_json::Value {
+    match v {
+        Value::NULL => serde_json::Value::Null,
+        Value::Bytes(b) => match std::str::from_utf8(b) {
+            Ok(s) => serde_json::Value::String(s.to_owned()),
+            Err(_) => serde_json::Value::String(format!("<blob {} bytes>", b.len())),
+        },
+        Value::Int(n) => serde_json::json!(n),
+        Value::UInt(n) => serde_json::json!(n),
+        Value::Float(n) => serde_json::json!(n),
+        Value::Double(n) => serde_json::json!(n),
+        Value::Date(y, m, d, h, min, s, micros) => {
+            serde_json::Value::String(format_mysql_date(*y, *m, *d, *h, *min, *s, *micros))
+        }
+        Value::Time(neg, days, h, min, s, micros) => {
+            serde_json::Value::String(format_mysql_time(*neg, *days, *h, *min, *s, *micros))
+        }
+    }
+}
+
+fn format_mysql_date(y: u16, m: u8, d: u8, h: u8, min: u8, s: u8, micros: u32) -> String {
+    if h == 0 && min == 0 && s == 0 && micros == 0 {
+        format!("{y:04}-{m:02}-{d:02}")
+    } else if micros == 0 {
+        format!("{y:04}-{m:02}-{d:02} {h:02}:{min:02}:{s:02}")
+    } else {
+        format!("{y:04}-{m:02}-{d:02} {h:02}:{min:02}:{s:02}.{micros:06}")
+    }
+}
+
+fn format_mysql_time(neg: bool, days: u32, h: u8, min: u8, s: u8, micros: u32) -> String {
+    let total_h = days * 24 + u32::from(h);
+    let sign = if neg { "-" } else { "" };
+    if micros == 0 {
+        format!("{sign}{total_h:02}:{min:02}:{s:02}")
+    } else {
+        format!("{sign}{total_h:02}:{min:02}:{s:02}.{micros:06}")
+    }
+}
+
 fn mysql_row_to_json(row: &Row, ncols: usize) -> Vec<serde_json::Value> {
     (0..ncols)
-        .map(|i| match row.as_ref(i).unwrap_or(&Value::NULL) {
-            Value::NULL => serde_json::Value::Null,
-            Value::Bytes(b) => serde_json::Value::String(String::from_utf8_lossy(b).into_owned()),
-            Value::Int(n) => serde_json::json!(n),
-            Value::UInt(n) => serde_json::json!(n),
-            Value::Float(n) => serde_json::json!(n),
-            Value::Double(n) => serde_json::json!(n),
-            other => serde_json::Value::String(format!("{other:?}")),
-        })
+        .map(|i| mysql_value_to_json(row.as_ref(i).unwrap_or(&Value::NULL)))
         .collect()
 }

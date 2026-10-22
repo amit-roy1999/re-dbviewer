@@ -4,7 +4,9 @@ export type Theme = "light" | "dark";
 
 export function getStoredTheme(): Theme {
   const v = localStorage.getItem(KEY);
-  return v === "dark" ? "dark" : "light";
+  if (v === "light") return "light";
+  // First launch (and any non-light value): dark so the query editor opens black.
+  return "dark";
 }
 
 export function applyTheme(theme: Theme) {

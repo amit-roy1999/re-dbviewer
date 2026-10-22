@@ -92,6 +92,8 @@ import {
   saveBookmark,
   type Bookmark,
 } from "@/lib/bookmarks";
+import { formatCellDisplay } from "@/lib/cellFormat";
+import { buildFkPeekSql } from "@/lib/fkNavigate";
 import { jsonToInserts } from "@/lib/importJson";
 import { TableEditor } from "@/components/TableEditor";
 import { ContextHelpPanel } from "@/components/ContextHelpPanel";
@@ -432,7 +434,7 @@ function sqlLiteral(value: unknown): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "number") return String(value);
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-  return `'${String(value).replace(/'/g, "''")}'`;
+  return `'${formatCellDisplay(value).replace(/'/g, "''")}'`;
 }
 
 function viewPrefsExt(p: AppPreferences) {
@@ -4499,7 +4501,7 @@ export default function Workspace({
                 ref={editorHost}
                 data-testid="sql-editor"
                 className={cn(
-                  "overflow-auto border-b border-border bg-card",
+                  "overflow-auto border-b border-border bg-[#0a0c10]",
                   (q.result || q.explainResult || q.script) && sqlVisible
                     ? "shrink-0"
                     : "min-h-0 flex-1",
@@ -4973,9 +4975,17 @@ export default function Workspace({
                   />
                 ) : (
                   <ResultGrid
+                    key={`data-grid:${activeTab.table}`}
                     result={findView.result}
                     exportContext={{ table: activeTab.table, engine }}
                     columnsMeta={details?.columns}
+                    foreignKeys={details?.foreignKeys ?? []}
+                    onOpenReferenced={(table, filters) => openData(table, filters)}
+                    onLoadReferenced={(table, filters) =>
+                      invoke<QueryResult>("run_sql", {
+                        sql: buildFkPeekSql(engine, table, filters),
+                      })
+                    }
                     sort={activeTab.sort}
                     onSort={toggleSort}
                     offset={activeTab.offset}

@@ -9,14 +9,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { formatCellDisplay } from "@/lib/cellFormat";
 import { cn } from "@/lib/utils";
 
 const cell = (v: unknown) =>
-  v === null || v === undefined
-    ? "NULL"
-    : typeof v === "object"
-      ? JSON.stringify(v)
-      : String(v);
+  v === null || v === undefined ? "NULL" : formatCellDisplay(v);
 
 /** Searchable read-only table over a QueryResult, with an optional trailing action column. */
 export function AdminTable({
