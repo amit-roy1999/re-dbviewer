@@ -52,7 +52,7 @@ npm run tauri build -- --bundles appimage,deb
 
 ## Demo
 
-Quick tour (home → data grid → relation builder → Visualize Data → Visual Query Builder → Search Data):
+Quick tour (home → data grid → relation builder → Visualize Data → Visual Query Builder → filtered table → JSON view):
 
 ![re-dbviewer feature tour](docs/media/demo-tour.gif)
 
@@ -60,11 +60,15 @@ Quick tour (home → data grid → relation builder → Visualize Data → Visua
 |------------------|----------------|
 | ![Relation query builder](docs/media/05-relation-builder.png) | ![Visualize Data](docs/media/04-visualize-data.png) |
 
-| Visual Query Builder | Search Data |
-|----------------------|-------------|
-| ![Visual Query Builder](docs/media/03-visual-query-builder.png) | ![Search Data](docs/media/06-search-data.png) |
+| Filtered data grid | JSON view |
+|--------------------|-----------|
+| ![Table with filters](docs/media/06-filtered-data.png) | ![JSON result view](docs/media/07-json-view.png) |
 
-Refresh stills/GIF: `npx playwright test e2e/demo-media.spec.ts` then rebuild `docs/media/demo-tour.gif` if needed. A longer Loom/YouTube walkthrough can replace the GIF — open a PR with the link.
+| Visual Query Builder |
+|----------------------|
+| ![Visual Query Builder](docs/media/03-visual-query-builder.png) |
+
+Refresh stills/GIF: `npx playwright test e2e/demo-media.spec.ts` then rebuild `docs/media/demo-tour.gif` if needed.
 
 ---
 
