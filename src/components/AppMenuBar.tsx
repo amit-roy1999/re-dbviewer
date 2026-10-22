@@ -31,6 +31,7 @@ type Props = {
   onNewWindow: () => void;
   onPreferences: () => void;
   onShortcuts?: () => void;
+  onCommandPalette?: () => void;
   /** Open an admin / modeling tool dialog for the front connection. */
   onTool?: (tool: ToolId) => void;
 };
@@ -44,6 +45,7 @@ export function AppMenuBar({
   onNewWindow,
   onPreferences,
   onShortcuts,
+  onCommandPalette,
   onTool,
 }: Props) {
   const actions = useWorkspaceActions();
@@ -272,6 +274,10 @@ export function AppMenuBar({
             onSelect={() => actions?.toggleHelp()}
           >
             Toggle Context Help
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onCommandPalette?.()}>
+            Command palette…
+            <DropdownMenuShortcut>Ctrl+K</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={!ws}

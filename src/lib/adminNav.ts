@@ -3,6 +3,7 @@
 export type AdminViewId =
   | "serverStatus"
   | "connections"
+  | "queryMonitor"
   | "users"
   | "variables"
   | "dataExport"
@@ -27,6 +28,7 @@ export const ADMIN_NAV: AdminNavGroup[] = [
     items: [
       { id: "serverStatus", label: "Server Status" },
       { id: "connections", label: "Client Connections" },
+      { id: "queryMonitor", label: "Query Monitor" },
       { id: "users", label: "Users and Privileges" },
       { id: "variables", label: "Status and System Variables" },
       { id: "dataExport", label: "Data Export" },

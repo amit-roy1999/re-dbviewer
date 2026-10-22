@@ -12,6 +12,7 @@ const SHORTCUTS: [keys: string, what: string][] = [
   ["Ctrl/⌘ + S", "Save SQL file"],
   ["Ctrl/⌘ + Shift + S", "Save SQL file as…"],
   ["Ctrl/⌘ + Shift + F", "Format SQL"],
+  ["Ctrl/⌘ + K", "Command palette (app features / settings)"],
   ["Ctrl/⌘ + Shift + H", "Search data in tables"],
   ["Ctrl/⌘ + Enter", "Run selection / current statement"],
   ["Ctrl/⌘ + Shift + Enter", "Run script (all statements)"],

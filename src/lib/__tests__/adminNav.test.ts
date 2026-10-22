@@ -18,6 +18,7 @@ describe("adminNav", () => {
     const ids = ADMIN_NAV.flatMap((g) => g.items.map((i) => i.id));
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toContain("serverStatus");
+    expect(ids).toContain("queryMonitor");
     expect(ids).toContain("optionsFile");
     expect(ids).toContain("perfSchemaSetup");
   });

@@ -6,6 +6,7 @@ import Workspace from "@/pages/Workspace";
 import { AppMenuBar } from "@/components/AppMenuBar";
 import { PreferencesDialog } from "@/components/PreferencesDialog";
 import { ShortcutsDialog } from "@/components/ShortcutsDialog";
+import { CommandPalette } from "@/components/CommandPalette";
 import type { SavedConnection } from "@/types";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -22,6 +23,11 @@ import {
 import { trackEditFocus } from "@/lib/clipboard";
 import { openNewWindow } from "@/lib/newWindow";
 import { ToolsHost, type ToolId } from "@/components/tools/ToolsHost";
+import { toggleTheme } from "@/lib/theme";
+import type {
+  CommandContext,
+  CommandTableEntry,
+} from "@/lib/appCommands";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -43,7 +49,11 @@ export default function App() {
   const workspaceActions = activeId ? (actionsById[activeId] ?? null) : null;
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [tool, setTool] = useState<ToolId | null>(null);
+  const [tablesById, setTablesById] = useState<
+    Record<string, CommandTableEntry[]>
+  >({});
 
   function onOpen(conn: SavedConnection) {
     // open_connection already made this the active Rust session
@@ -89,6 +99,11 @@ export default function App() {
       return rest;
     });
     setActionsById((prev) => {
+      const next = { ...prev };
+      for (const id of ids) delete next[id];
+      return next;
+    });
+    setTablesById((prev) => {
       const next = { ...prev };
       for (const id of ids) delete next[id];
       return next;
@@ -166,11 +181,39 @@ export default function App() {
       } else if (!e.shiftKey && kl === ",") {
         e.preventDefault();
         setPrefsOpen(true);
+      } else if (!e.shiftKey && kl === "k") {
+        e.preventDefault();
+        setCommandPaletteOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  const commandCtx: CommandContext = {
+    connected: open != null,
+    engine: open?.engine,
+    actions: workspaceActions,
+    tables: open ? (tablesById[open.id] ?? []) : [],
+    openPrefs: () => setPrefsOpen(true),
+    openShortcuts: () => setShortcutsOpen(true),
+    setTool: (id) => setTool(id),
+    toggleTheme: () => {
+      toggleTheme();
+    },
+    bumpZoom: (d) => {
+      bumpUiZoom(d);
+    },
+    resetZoom: () => {
+      resetUiZoom();
+    },
+    disconnect: () => {
+      void disconnect();
+    },
+    newWindow: () => {
+      void openNewWindow();
+    },
+  };
 
   return (
     <TooltipProvider>
@@ -182,6 +225,7 @@ export default function App() {
           onNewWindow={() => void openNewWindow()}
           onPreferences={() => setPrefsOpen(true)}
           onShortcuts={() => setShortcutsOpen(true)}
+          onCommandPalette={() => setCommandPaletteOpen(true)}
           onTool={setTool}
         />
         {conns.length > 0 ? (
@@ -267,6 +311,9 @@ export default function App() {
                 onActionsReady={(a) =>
                   setActionsById((prev) => ({ ...prev, [c.id]: a }))
                 }
+                onSchemaTables={(tables) =>
+                  setTablesById((prev) => ({ ...prev, [c.id]: tables }))
+                }
                 onOpenTool={setTool}
               />
             </div>
@@ -281,6 +328,11 @@ export default function App() {
       />
       <PreferencesDialog open={prefsOpen} onClose={() => setPrefsOpen(false)} />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        ctx={commandCtx}
+      />
       </WorkspaceActionsProvider>
     </TooltipProvider>
   );

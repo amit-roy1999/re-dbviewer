@@ -46,10 +46,10 @@ Top of the window:
 | **File** | New Query Tab (`Ctrl+T`), Close Tab (`Ctrl+W`), Open SQL… (`Ctrl+O`), Save (`Ctrl+S`), Save As… (`Ctrl+Shift+S`), Export Result CSV…, Dump Schema SQL…, Dump Selected Tables…, Restore SQL File…, Preferences… (`Ctrl+,`), Reconnect, Disconnect (`Ctrl+Shift+Q`), Exit. **New Window** (`Ctrl+Shift+N`) opens another Home window (all windows share the one live DB session). |
 | **Edit** | Format SQL (`Ctrl+Shift+F`), Undo / Redo (editor), Cut / Copy / Paste (act on the last focused editor or text field). |
 | **Query** | Run Script (`Ctrl+Shift+Enter`), Stop, Begin / Commit / Rollback. |
-| **View** | Toggle History, Snippets, Context Help; Search Data… (`Ctrl+Shift+H`); Inspect Table…; Schema Inspector…; Preferences…; **Keyboard shortcuts…**; Toggle theme. |
+| **View** | Toggle History, Snippets, Context Help; **Command palette…** (`Ctrl+K` — search app features/menus/settings, not DB rows); Search Data… (`Ctrl+Shift+H`); Inspect Table…; Schema Inspector…; Preferences…; **Keyboard shortcuts…**; Toggle theme. |
 | **Tools** | Server Admin (Workbench Administration), EER Diagram, Schema Compare, Migration Wizard, Fake Data Factory. See [Tools](#tools) and [Administration](#administration). |
 
-`Ctrl+T/W/O/S/Shift+S/Shift+F` also work from the keyboard (⌘ on macOS). **View → Keyboard shortcuts…** lists them all (including `Ctrl+Enter`, `Ctrl+Shift+Enter`, `Ctrl+Shift+Q`, `Ctrl+,`).
+`Ctrl+T/W/O/S/Shift+S/Shift+F/K` also work from the keyboard (⌘ on macOS). **View → Keyboard shortcuts…** lists them all (including `Ctrl+Enter`, `Ctrl+Shift+Enter`, `Ctrl+Shift+Q`, `Ctrl+,`, `Ctrl+K`). **Command palette** finds menus, tools, admin views, preferences, and **table/view names** on the front connection (type to filter); it does **not** search row values (use **Search Data** for that).
 
 ---
 
@@ -300,11 +300,11 @@ Click the **connection name** in the left sidebar (MySQL / MariaDB / PostgreSQL)
 
 Left nav mirrors MySQL Workbench:
 
-- **Management:** Server Status (dashboard), Client Connections (+ Kill), Users and Privileges (Grants / New / Drop), Status and System Variables, Data Export, Data Import/Restore
+- **Management:** Server Status (dashboard), Client Connections (+ Kill), **Query Monitor** (live non-idle queries from other clients + Recent/top statement stats; type filters; auto-refresh on Running; Kill needs DDL), Users and Privileges (Grants / New / Drop), Status and System Variables, Data Export, Data Import/Restore
 - **Instance:** Startup / Shutdown (info stub — OS service control is out of reach over SQL), Server Logs, Options File (info stub)
 - **Performance:** Dashboard, Performance Reports, Performance Schema Setup (read-only)
 
-Kill, Drop and New user need the DDL permission; the account this connection uses cannot be dropped from here.
+Kill, Drop and New user need the DDL permission; the account this connection uses cannot be dropped from here. Query Monitor’s **Recent / top** tab needs MySQL `performance_schema` digests or PostgreSQL `pg_stat_statements`.
 
 ## Tools
 

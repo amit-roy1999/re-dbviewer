@@ -7,7 +7,31 @@ export type AdminTab =
   | "performance"
   | "logs"
   | "serverStatus"
-  | "perfSchemaSetup";
+  | "perfSchemaSetup"
+  | "queryMonitorRunning"
+  | "queryMonitorRecent";
+
+/** Bucket for Query Monitor type filter chips. */
+export type QueryTypeFilter = "all" | "select" | "dml" | "ddl" | "other";
+
+export function queryTypeBucket(queryType: string): Exclude<QueryTypeFilter, "all"> {
+  const t = queryType.trim().toUpperCase().replace(/[^A-Z_]/g, "");
+  if (t === "SELECT" || t === "WITH" || t === "SHOW" || t === "EXPLAIN" || t === "DESCRIBE" || t === "DESC")
+    return "select";
+  if (t === "INSERT" || t === "UPDATE" || t === "DELETE" || t === "REPLACE" || t === "MERGE")
+    return "dml";
+  if (
+    t === "CREATE" ||
+    t === "ALTER" ||
+    t === "DROP" ||
+    t === "TRUNCATE" ||
+    t === "RENAME" ||
+    t === "GRANT" ||
+    t === "REVOKE"
+  )
+    return "ddl";
+  return "other";
+}
 
 const MYSQL_SYS = "'mysql','information_schema','performance_schema','sys'";
 
@@ -89,6 +113,18 @@ export function adminSql(engine: string, tab: AdminTab): string[] {
             "SELECT name::text AS name, setting::text AS setting FROM pg_settings WHERE name LIKE '%stat%' OR name = 'shared_preload_libraries' ORDER BY name",
             "SELECT extname::text AS extension, extversion::text AS version FROM pg_extension WHERE extname IN ('pg_stat_statements') ORDER BY 1",
           ];
+    case "queryMonitorRunning":
+      return [
+        my
+          ? `SELECT ID AS id, USER AS user, HOST AS host, DB AS db, COMMAND AS command, TIME AS duration_s, STATE AS state, UPPER(SUBSTRING_INDEX(TRIM(INFO), ' ', 1)) AS query_type, LEFT(INFO, 500) AS query FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep' AND INFO IS NOT NULL AND TRIM(INFO) <> '' ORDER BY TIME DESC`
+          : `SELECT pid::text AS id, usename::text AS user, coalesce(client_addr::text, client_hostname::text, '') AS host, datname::text AS db, state::text AS state, (now() - query_start)::text AS duration, upper(split_part(trim(query), ' ', 1)) AS query_type, left(query, 500) AS query FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND state IS DISTINCT FROM 'idle' AND query IS NOT NULL AND btrim(query) <> '' AND query NOT ILIKE 'IDLE' ORDER BY query_start NULLS LAST`,
+      ];
+    case "queryMonitorRecent":
+      return [
+        my
+          ? `SELECT LEFT(digest_text, 200) AS statement, schema_name AS db_schema, count_star AS calls, ROUND(sum_timer_wait/1000000000000,3) AS total_s, ROUND(avg_timer_wait/1000000000000,6) AS avg_s, sum_rows_examined AS rows_examined, UPPER(SUBSTRING_INDEX(TRIM(digest_text), ' ', 1)) AS query_type FROM performance_schema.events_statements_summary_by_digest WHERE digest_text IS NOT NULL ORDER BY sum_timer_wait DESC LIMIT 50`
+          : `SELECT left(query, 200)::text AS statement, calls::text AS calls, round(total_exec_time::numeric, 1)::text AS total_ms, round(mean_exec_time::numeric, 2)::text AS avg_ms, rows::text AS rows, upper(split_part(trim(query), ' ', 1)) AS query_type FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 50`,
+      ];
   }
 }
 

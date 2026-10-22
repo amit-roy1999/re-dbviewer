@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   Circle,
@@ -22,7 +22,9 @@ import {
   grantsSql,
   isMysqlFamily,
   kvMap,
+  queryTypeBucket,
   type AdminTab,
+  type QueryTypeFilter,
 } from "@/lib/adminSql";
 import type { AdminViewId } from "@/lib/adminNav";
 import { AdminTable } from "@/components/tools/AdminTable";
@@ -384,6 +386,181 @@ function ProcessesView({ connection }: { connection: SavedConnection }) {
                 Kill
               </Button>
             )}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function filterByQueryType(
+  result: QueryResult | null,
+  filter: QueryTypeFilter,
+): QueryResult | null {
+  if (!result || filter === "all") return result;
+  const idx = result.columns.findIndex(
+    (c) => c.toLowerCase() === "query_type",
+  );
+  if (idx < 0) return result;
+  return {
+    ...result,
+    rows: result.rows.filter(
+      (r) => queryTypeBucket(String(r[idx] ?? "")) === filter,
+    ),
+  };
+}
+
+const TYPE_FILTERS: { id: QueryTypeFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "select", label: "SELECT" },
+  { id: "dml", label: "DML" },
+  { id: "ddl", label: "DDL" },
+  { id: "other", label: "Other" },
+];
+
+function QueryMonitorView({ connection }: { connection: SavedConnection }) {
+  const [pane, setPane] = useState<"running" | "recent">("running");
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [typeFilter, setTypeFilter] = useState<QueryTypeFilter>("all");
+  const [msg, setMsg] = useState("");
+  const tab: AdminTab =
+    pane === "running" ? "queryMonitorRunning" : "queryMonitorRecent";
+  const { results, errors, busy, load } = useAdminQuery(
+    connection.engine,
+    connection.id,
+    tab,
+  );
+  const canKill = connection.permissions.allowDdl;
+  const filtered = useMemo(
+    () => filterByQueryType(results[0] ?? null, typeFilter),
+    [results, typeFilter],
+  );
+
+  useEffect(() => {
+    if (pane === "running") setAutoRefresh(true);
+    else setAutoRefresh(false);
+  }, [pane]);
+
+  useEffect(() => {
+    if (!autoRefresh || pane !== "running") return;
+    const id = window.setInterval(() => {
+      void load();
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [autoRefresh, pane, load]);
+
+  async function kill(row: unknown[]) {
+    const id = Number(row[0]);
+    if (!Number.isFinite(id)) return;
+    setMsg("");
+    try {
+      await runSql(
+        isMysqlFamily(connection.engine)
+          ? `KILL ${id}`
+          : `SELECT pg_terminate_backend(${id})`,
+        connection.id,
+      );
+      setMsg(`Killed process ${id}.`);
+      await load();
+    } catch (e) {
+      setMsg(String(e));
+    }
+  }
+
+  return (
+    <div
+      data-testid="query-monitor"
+      className="flex h-full min-h-0 flex-col"
+    >
+      <PanelHeader
+        title="Query Monitor"
+        busy={busy}
+        onRefresh={() => void load()}
+      >
+        <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
+          <Button
+            size="xs"
+            variant={pane === "running" ? "secondary" : "ghost"}
+            onClick={() => setPane("running")}
+          >
+            Running now
+          </Button>
+          <Button
+            size="xs"
+            variant={pane === "recent" ? "secondary" : "ghost"}
+            onClick={() => setPane("recent")}
+          >
+            Recent / top
+          </Button>
+        </div>
+        {pane === "running" ? (
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="size-3.5 accent-primary"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+            />
+            Auto-refresh (3s)
+          </label>
+        ) : null}
+      </PanelHeader>
+      <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+        <div className="flex flex-wrap items-center gap-1">
+          {TYPE_FILTERS.map((f) => (
+            <Button
+              key={f.id}
+              size="xs"
+              variant={typeFilter === f.id ? "secondary" : "outline"}
+              onClick={() => setTypeFilter(f.id)}
+            >
+              {f.label}
+            </Button>
+          ))}
+        </div>
+        {msg ? (
+          <Alert>
+            <AlertDescription>{msg}</AlertDescription>
+          </Alert>
+        ) : null}
+        {errors[0] ? (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {pane === "recent"
+                ? `Could not load recent statements. ${isMysqlFamily(connection.engine) ? "Requires performance_schema digests." : "Requires the pg_stat_statements extension."} ${errors[0]}`
+                : errors[0]}
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <AdminTable
+            fill
+            result={filtered}
+            emptyText={
+              pane === "running"
+                ? "No non-idle queries right now."
+                : "No statement stats yet."
+            }
+            actionLabel={pane === "running" ? "Kill" : undefined}
+            action={
+              pane === "running"
+                ? (row) => (
+                    <Button
+                      size="xs"
+                      variant="destructive"
+                      disabled={busy || !canKill}
+                      title={
+                        canKill
+                          ? "Terminate this session"
+                          : "DDL permission required to kill"
+                      }
+                      onClick={() => void kill(row)}
+                    >
+                      <Skull className="size-3" />
+                      Kill
+                    </Button>
+                  )
+                : undefined
+            }
           />
         )}
       </div>
@@ -854,6 +1031,8 @@ function AdminViewBody({
       return <ServerStatusView connection={connection} />;
     case "connections":
       return <ProcessesView connection={connection} />;
+    case "queryMonitor":
+      return <QueryMonitorView connection={connection} />;
     case "users":
       return <UsersView connection={connection} />;
     case "variables":

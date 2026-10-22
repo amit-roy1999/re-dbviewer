@@ -8,6 +8,7 @@ import {
   grantsSql,
   isMysqlFamily,
   kvMap,
+  queryTypeBucket,
 } from "@/lib/adminSql";
 
 describe("adminSql", () => {
@@ -21,6 +22,34 @@ describe("adminSql", () => {
   it("returns processlist SQL for mysql and postgres", () => {
     expect(adminSql("mysql", "processes")[0]).toMatch(/PROCESSLIST/i);
     expect(adminSql("postgres", "processes")[0]).toMatch(/pg_stat_activity/);
+  });
+
+  it("query monitor running and recent SQL", () => {
+    expect(adminSql("mysql", "queryMonitorRunning")[0]).toMatch(
+      /information_schema\.PROCESSLIST/i,
+    );
+    expect(adminSql("mysql", "queryMonitorRunning")[0]).toMatch(/query_type/i);
+    expect(adminSql("postgres", "queryMonitorRunning")[0]).toMatch(
+      /pg_stat_activity/,
+    );
+    expect(adminSql("mysql", "queryMonitorRecent")[0]).toMatch(
+      /events_statements_summary_by_digest/i,
+    );
+    expect(adminSql("mysql", "queryMonitorRecent")[0]).not.toMatch(
+      /\sAS schema[, ]/i,
+    );
+    expect(adminSql("mysql", "queryMonitorRecent")[0]).toMatch(/db_schema/);
+    expect(adminSql("postgres", "queryMonitorRecent")[0]).toMatch(
+      /pg_stat_statements/,
+    );
+  });
+
+  it("queryTypeBucket classifies keywords", () => {
+    expect(queryTypeBucket("SELECT")).toBe("select");
+    expect(queryTypeBucket("with")).toBe("select");
+    expect(queryTypeBucket("INSERT")).toBe("dml");
+    expect(queryTypeBucket("CREATE")).toBe("ddl");
+    expect(queryTypeBucket("BEGIN")).toBe("other");
   });
 
   it("returns serverStatus queries for mysql", () => {

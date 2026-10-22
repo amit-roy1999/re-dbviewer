@@ -17,7 +17,7 @@ test("admin nav switches views and returns to Objects with editor", async ({
   await page.getByTestId("btn-workspace-mode").click();
   await expect(page.getByTestId("admin-workbench")).toBeVisible();
 
-  for (const id of ["processes", "users", "variables"]) {
+  for (const id of ["connections", "queryMonitor", "users", "variables"]) {
     const tab = page.getByTestId(`admin-view-${id}`);
     if (await tab.count()) {
       await tab.click();
@@ -27,4 +27,15 @@ test("admin nav switches views and returns to Objects with editor", async ({
 
   await page.getByTestId("btn-workspace-mode").click();
   await expect(page.getByTestId("sql-editor")).toBeVisible();
+});
+
+test("Query Monitor opens Running now pane", async ({ page }) => {
+  await openDemoWorkspace(page);
+  await page.getByTestId("btn-workspace-mode").click();
+  await page.getByTestId("admin-view-queryMonitor").click();
+  await expect(page.getByTestId("query-monitor")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Running now" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Recent / top" })).toBeVisible();
+  await page.getByRole("button", { name: "Recent / top" }).click();
+  await expect(page.getByTestId("query-monitor")).toBeVisible();
 });

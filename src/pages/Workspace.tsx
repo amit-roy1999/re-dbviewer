@@ -240,6 +240,10 @@ type Props = {
   onBack: () => void;
   /** Called with stable menu actions on mount, and `null` on unmount. */
   onActionsReady?: (actions: WorkspaceActions | null) => void;
+  /** Schema table/view list for the command palette (active connection). */
+  onSchemaTables?: (
+    tables: { ref: string; name: string; kind: string; schema: string }[],
+  ) => void;
   /** False when another connection tab is in front (keeps state, ignores shortcuts). */
   visible?: boolean;
   /** Open a Tools dialog (e.g. EER from the table ⋯ menu). */
@@ -433,6 +437,7 @@ export default function Workspace({
   onActionsReady,
   visible = true,
   onOpenTool,
+  onSchemaTables,
 }: Props) {
   const engine = connection.engine;
   const [schema, setSchema] = useState<SchemaNode[]>([]);
@@ -561,6 +566,29 @@ export default function Workspace({
   const actionsRef = useRef<WorkspaceActions | null>(null);
   const onActionsReadyRef = useRef(onActionsReady);
   onActionsReadyRef.current = onActionsReady;
+  const onSchemaTablesRef = useRef(onSchemaTables);
+  onSchemaTablesRef.current = onSchemaTables;
+
+  useEffect(() => {
+    if (!onSchemaTablesRef.current) return;
+    const tables: {
+      ref: string;
+      name: string;
+      kind: string;
+      schema: string;
+    }[] = [];
+    for (const s of schema) {
+      for (const c of s.children) {
+        tables.push({
+          schema: s.name,
+          name: c.name,
+          kind: c.kind,
+          ref: tableRef(s.name, c.name, engine),
+        });
+      }
+    }
+    onSchemaTablesRef.current(tables);
+  }, [schema, engine]);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
 
@@ -3185,6 +3213,18 @@ export default function Workspace({
         setAdminView(DEFAULT_ADMIN_VIEW);
         setWorkspaceMode("admin");
       },
+      openAdminView: (id) => {
+        if (!adminSupported(engine)) {
+          setStatus("Administration is available for MySQL, MariaDB, and PostgreSQL");
+          return;
+        }
+        setAdminView(id);
+        setWorkspaceMode("admin");
+      },
+      openTable: (ref) => {
+        setWorkspaceMode("objects");
+        openData(ref);
+      },
       openSqlInTab: (sql: string) => void newQueryTab(sql),
     };
   });
@@ -3214,6 +3254,8 @@ export default function Workspace({
       schemaInspector: () => actionsRef.current?.schemaInspector(),
       dumpTables: () => actionsRef.current?.dumpTables(),
       openServerAdmin: () => actionsRef.current?.openServerAdmin(),
+      openAdminView: (id) => actionsRef.current?.openAdminView?.(id),
+      openTable: (ref) => actionsRef.current?.openTable?.(ref),
       openSqlInTab: (sql) => actionsRef.current?.openSqlInTab?.(sql),
     };
     onActionsReadyRef.current?.(stable);

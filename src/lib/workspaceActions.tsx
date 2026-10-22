@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import type { AdminViewId } from "@/lib/adminNav";
 
 export type WorkspaceActions = {
   newQueryTab: () => void;
@@ -25,6 +26,10 @@ export type WorkspaceActions = {
   dumpTables: () => void;
   /** Open Workbench-style Administration mode (Server Status). */
   openServerAdmin: () => void;
+  /** Open Administration on a specific nav view. */
+  openAdminView?: (id: AdminViewId) => void;
+  /** Open a schema table/view (data tab). */
+  openTable?: (ref: string) => void;
   /** Open SQL text in a new query tab (used by EER forward-engineer). */
   openSqlInTab?: (sql: string) => void;
 };
