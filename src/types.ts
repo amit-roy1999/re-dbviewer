@@ -18,6 +18,16 @@ export type ConnectionConfig = {
   sshKeyPath?: string | null;
   /** Set by the backend when the password lives in the OS keyring. */
   passwordInKeyring?: boolean;
+  /** Set by the backend when the password lives in the encrypted app vault. */
+  passwordInVault?: boolean;
+  /** When false on save, clear any stored password (default true). */
+  storePassword?: boolean;
+};
+
+export type VaultStatus = {
+  exists: boolean;
+  unlocked: boolean;
+  keyringAvailable: boolean;
 };
 
 export type Permissions = {

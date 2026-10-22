@@ -23,7 +23,7 @@ Source: MySQL Workbench Manual chs 3–10 vs re-dbviewer on `feature/workbench-p
 | B2 | SSH tunnel UI | partial |
 | B3 | SSL file pickers | partial |
 | B4 | Socket/pipe | done |
-| B5 | OS keyring | done |
+| B5 | OS keyring + encrypted vault fallback | done |
 | B6 | Connection color on tabs — left stripe on each connection tab, top bar when active | done |
 | B7 | Duplicate connection / copy URL | done |
 | B8 | LDAP/Kerberos | oos |
@@ -141,7 +141,7 @@ Workbench-style **Administration** mode: click the connection name in the Worksp
 | B2 | Form fields `sshHost/Port/User/KeyPath`; tunnel = system `ssh -N -L` (key auth, `BatchMode`), local port picked automatically, killed on disconnect. Used by open and Test. | Needs `ssh` on PATH; no password / agent-prompt auth; host-key policy `accept-new`; not tested against a real bastion in CI. |
 | B3 | `sslMode`, `sslCa`, `sslCert`, `sslKey`. Postgres: TLS via native-tls with CA + client cert/key (PEM). MySQL/MariaDB: TLS with optional CA (`verify-*` modes verify). | MySQL client cert/key are stored but not used (driver needs PKCS#12). SQL Server ignores SSL fields. `require` does not verify the server cert. |
 | B4 | `socketPath`: MySQL socket file / Postgres socket directory. | Unix only; ignored when an SSH tunnel is set. |
-| B5 | Passwords go to the OS keyring (`keyring` crate, service `re-dbviewer`, key = connection id); config JSON keeps only `passwordInKeyring: true`. | If the keyring is unavailable the password falls back to the local SQLite store (plaintext). Existing plaintext passwords migrate on next save of the connection. Copy URL includes the password. |
+| B5 | Passwords go to the OS keyring (`keyring` crate, service `re-dbviewer`, key = connection id) when available; else encrypted app vault (Argon2id + AES-256-GCM). Config JSON keeps `passwordInKeyring` / `passwordInVault` flags only — **no plaintext**. Home **Store in Vault** checkbox (Workbench-style); unlock dialog when vault is needed. | Vault master password is local-only and session-scoped after unlock. Legacy plaintext migrates on list/save when keyring or unlocked vault can accept it. Copy URL may still include a hydrated session password. |
 | B7 | Card menu **Duplicate** (`duplicate_connection`, name + " (copy)") and **Copy URL**. | — |
 | F1–F4, G3 | **Tools → Server Admin** (MySQL/MariaDB/Postgres): Processes (+Kill), Status, Variables, Users (+Grants, New user), Performance (largest tables, MySQL I/O waits / PG `pg_stat_user_tables`); all tables are searchable. | Logs tab is best-effort (MySQL 8.0.22+ `error_log`; elsewhere variables / settings only). No revoke. Kill / create / drop user need the DDL permission on the connection. Top-statements reports need `performance_schema` (MySQL) or `pg_stat_statements` (PG). |
 | G1 | **Visual Explain** SVG diagram (Workbench-style): color-coded access boxes, join diamonds, cost/rows badges; Postgres JSON, MySQL tabular, SQLite QUERY PLAN. | Not pixel-identical to WB; layout is top-down tree. |

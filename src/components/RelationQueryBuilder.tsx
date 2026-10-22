@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   Copy,
@@ -6,6 +6,7 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Search,
   SquareArrowOutUpRight,
   Trash2,
 } from "lucide-react";
@@ -37,7 +38,6 @@ import { copyText } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const FILTER_OPS: { id: FilterOp; label: string }[] = [
@@ -63,12 +63,38 @@ function newFilter(nodeId: string): RelationFilter {
   };
 }
 
+/** Prefer metric / label columns over bare id / *_id FKs (better for charts). */
+function defaultColumnsFor(details: TableDetails | null | undefined): string[] {
+  if (!details?.columns.length) return [];
+  const names = details.columns.map((c) => c.name);
+  const preferred = names.filter((n) => !/^id$/i.test(n) && !/_id$/i.test(n));
+  const pick = preferred.length ? preferred : names;
+  return pick.slice(0, 8);
+}
+
+export type RelationQueryModel = {
+  sql: string;
+  graph: RelationGraph;
+  selected: SelectedColumns;
+  filters: RelationFilter[];
+  joinType: JoinType;
+};
+
 type Props = {
   table: string;
   engine: string;
   connectionId: string;
   details: TableDetails;
-  onOpenSql: (sql: string) => void;
+  onOpenSql?: (sql: string) => void;
+  /** Called whenever SQL / graph selection changes. */
+  onModelChange?: (model: RelationQueryModel) => void;
+  /** When set, replaces "Open in query tab". */
+  primaryActionLabel?: string;
+  onPrimaryAction?: (sql: string) => void;
+  /** Restore saved graph (skips initial FK seed). */
+  initialModel?: Omit<RelationQueryModel, "sql"> | null;
+  /** Include 1-hop neighbors and pick chart-friendly columns on seed (Visualize). */
+  autoIncludeNeighbors?: boolean;
 };
 
 function edgePath(a: RelationNode, b: RelationNode) {
@@ -90,17 +116,30 @@ export function RelationQueryBuilder({
   connectionId,
   details,
   onOpenSql,
+  onModelChange,
+  primaryActionLabel,
+  onPrimaryAction,
+  initialModel = null,
+  autoIncludeNeighbors = false,
 }: Props) {
   const [graph, setGraph] = useState<RelationGraph>(() =>
-    emptyGraph(createRootNode(table, details)),
+    initialModel?.graph ?? emptyGraph(createRootNode(table, details)),
   );
-  const [selected, setSelected] = useState<SelectedColumns>({});
-  const [filters, setFilters] = useState<RelationFilter[]>([]);
-  const [joinType, setJoinType] = useState<JoinType>("LEFT");
+  const [selected, setSelected] = useState<SelectedColumns>(
+    () => initialModel?.selected ?? {},
+  );
+  const [filters, setFilters] = useState<RelationFilter[]>(
+    () => initialModel?.filters ?? [],
+  );
+  const [joinType, setJoinType] = useState<JoinType>(
+    () => initialModel?.joinType ?? "LEFT",
+  );
   const [busy, setBusy] = useState(false);
   const [expanding, setExpanding] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
+  const [colQuery, setColQuery] = useState("");
+  const skipSeed = useRef(!!initialModel);
 
   const seed = useCallback(async () => {
     setBusy(true);
@@ -148,18 +187,33 @@ export function RelationQueryBuilder({
         inbound,
         detailsByRef,
       );
+      const selectedCols: SelectedColumns = {
+        [root.id]: defaultColumnsFor(details),
+      };
+      if (autoIncludeNeighbors) {
+        g = {
+          ...g,
+          nodes: g.nodes.map((n) => {
+            if (n.isRoot) return n;
+            selectedCols[n.id] = defaultColumnsFor(n.details);
+            return { ...n, included: true };
+          }),
+        };
+      }
       setGraph(g);
-      setSelected({
-        [root.id]: details.columns.slice(0, 3).map((c) => c.name),
-      });
+      setSelected(selectedCols);
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
     }
-  }, [table, engine, connectionId, details]);
+  }, [table, engine, connectionId, details, autoIncludeNeighbors]);
 
   useEffect(() => {
+    if (skipSeed.current) {
+      skipSeed.current = false;
+      return;
+    }
     void seed();
   }, [seed]);
 
@@ -175,10 +229,44 @@ export function RelationQueryBuilder({
     [graph, engine, joinType, selected, filters],
   );
 
+  useEffect(() => {
+    onModelChange?.({ sql, graph, selected, filters, joinType });
+  }, [sql, graph, selected, filters, joinType, onModelChange]);
+
   const includedNodes = useMemo(
     () => graph.nodes.filter((n) => n.included),
     [graph.nodes],
   );
+
+  const columnRows = useMemo(() => {
+    const q = colQuery.trim().toLowerCase();
+    const rows: {
+      nodeId: string;
+      table: string;
+      column: string;
+      label: string;
+    }[] = [];
+    for (const n of includedNodes) {
+      for (const c of n.details?.columns ?? []) {
+        const label = `${n.name}.${c.name}`;
+        if (
+          q &&
+          !label.toLowerCase().includes(q) &&
+          !c.name.toLowerCase().includes(q) &&
+          !n.name.toLowerCase().includes(q)
+        ) {
+          continue;
+        }
+        rows.push({
+          nodeId: n.id,
+          table: n.name,
+          column: c.name,
+          label,
+        });
+      }
+    }
+    return rows;
+  }, [includedNodes, colQuery]);
 
   const size = useMemo(() => {
     const t = graph.nodes;
@@ -259,7 +347,12 @@ export function RelationQueryBuilder({
     setGraph((g) => setNodeIncluded(g, node.id, next));
     if (!next) {
       setFilters((prev) => prev.filter((f) => f.nodeId !== node.id));
+      return;
     }
+    setSelected((prev) => {
+      if ((prev[node.id] ?? []).length > 0) return prev;
+      return { ...prev, [node.id]: defaultColumnsFor(node.details) };
+    });
   }
 
   function patchFilter(id: string, patch: Partial<RelationFilter>) {
@@ -291,7 +384,7 @@ export function RelationQueryBuilder({
   return (
     <div
       data-testid="relation-query-builder"
-      className="flex min-h-0 flex-1 flex-col"
+      className="flex h-full min-h-0 flex-col overflow-hidden"
     >
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <span className="text-xs text-muted-foreground">Join</span>
@@ -336,15 +429,27 @@ export function RelationQueryBuilder({
           <Copy className="size-3.5" />
           Copy
         </Button>
-        <Button
-          size="sm"
-          className="h-7"
-          disabled={!sql}
-          onClick={() => onOpenSql(sql)}
-        >
-          <SquareArrowOutUpRight className="size-3.5" />
-          Open in query tab
-        </Button>
+        {onPrimaryAction && primaryActionLabel ? (
+          <Button
+            size="sm"
+            className="h-7"
+            disabled={!sql}
+            onClick={() => onPrimaryAction(sql)}
+          >
+            {primaryActionLabel}
+          </Button>
+        ) : null}
+        {onOpenSql ? (
+          <Button
+            size="sm"
+            className="h-7"
+            disabled={!sql}
+            onClick={() => onOpenSql(sql)}
+          >
+            <SquareArrowOutUpRight className="size-3.5" />
+            Open in query tab
+          </Button>
+        ) : null}
         <span className="ml-auto text-[10px] text-muted-foreground">
           Click a related table to include · Expand for nested joins
         </span>
@@ -359,7 +464,8 @@ export function RelationQueryBuilder({
         <p className="px-3 py-1 text-[10px] text-muted-foreground">{msg}</p>
       ) : null}
 
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(160px,1fr)_auto] lg:grid-cols-[1fr_280px] lg:grid-rows-1">
+      {/* Graph + columns — only this region scrolls; filters stay visible below */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(16rem,20rem)] lg:grid-rows-1">
         <div className="min-h-0 overflow-auto border-b border-border lg:border-r lg:border-b-0">
           {busy && graph.nodes.length <= 1 ? (
             <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
@@ -472,190 +578,210 @@ export function RelationQueryBuilder({
         </div>
 
         <div className="flex min-h-0 flex-col overflow-hidden">
-          <div className="shrink-0 border-b border-border px-3 py-1.5 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
-            Columns
+          <div className="shrink-0 space-y-1.5 border-b border-border px-2 py-1.5">
+            <div className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+              Columns
+            </div>
+            <div className="relative">
+              <Search className="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                data-testid="relation-column-search"
+                className="h-7 pl-7 font-mono text-[11px]"
+                placeholder="Search table.column…"
+                value={colQuery}
+                onChange={(e) => setColQuery(e.target.value)}
+              />
+            </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto p-2">
-            {includedNodes.map((n) => (
-              <div key={n.id} className="mb-3">
-                <div className="mb-1 flex items-center gap-1.5">
-                  <Badge variant="secondary" className="font-mono text-[10px]">
-                    {n.name}
-                  </Badge>
-                  {n.isRoot ? (
-                    <span className="text-[10px] text-muted-foreground">
-                      root
-                    </span>
-                  ) : null}
-                </div>
-                <ul className="flex flex-col gap-0.5">
-                  {(n.details?.columns ?? []).map((c) => {
-                    const on = (selected[n.id] ?? []).includes(c.name);
-                    return (
-                      <li key={c.name}>
-                        <button
-                          type="button"
-                          className={cn(
-                            "flex w-full items-center gap-1.5 rounded px-1.5 py-0.5 text-left font-mono text-[11px] hover:bg-muted/80",
-                            on && "bg-muted",
-                          )}
-                          onClick={() => toggleColumn(n.id, c.name)}
-                        >
-                          {on ? (
-                            <Check className="size-3 text-primary" />
-                          ) : (
-                            <span className="size-3" />
-                          )}
-                          {c.name}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ))}
+          <div
+            data-testid="relation-column-list"
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5"
+          >
+            {!includedNodes.length ? (
+              <p className="px-1.5 py-2 text-[11px] text-muted-foreground">
+                Include tables on the graph to list columns.
+              </p>
+            ) : !columnRows.length ? (
+              <p className="px-1.5 py-2 text-[11px] text-muted-foreground">
+                No columns match “{colQuery}”.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-0.5">
+                {columnRows.map((row) => {
+                  const on = (selected[row.nodeId] ?? []).includes(row.column);
+                  return (
+                    <li key={`${row.nodeId}.${row.column}`}>
+                      <button
+                        type="button"
+                        title={row.label}
+                        className={cn(
+                          "flex w-full items-center gap-1.5 rounded px-1.5 py-0.5 text-left font-mono text-[11px] hover:bg-muted/80",
+                          on && "bg-muted",
+                        )}
+                        onClick={() => toggleColumn(row.nodeId, row.column)}
+                      >
+                        {on ? (
+                          <Check className="size-3 shrink-0 text-primary" />
+                        ) : (
+                          <span className="size-3 shrink-0" />
+                        )}
+                        <span className="min-w-0 truncate">
+                          <span className="text-muted-foreground">
+                            {row.table}.
+                          </span>
+                          {row.column}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
         </div>
       </div>
 
-      <div
-        data-testid="relation-filters"
-        className="shrink-0 border-t border-border"
-      >
-        <div className="flex items-center gap-2 border-b border-border px-3 py-1">
-          <span className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
-            Filters
-          </span>
-          <Button
-            size="xs"
-            variant="outline"
-            className="ml-auto"
-            disabled={!includedNodes.length}
-            onClick={() =>
-              setFilters((prev) => [
-                ...prev,
-                newFilter(includedNodes[0]?.id ?? graph.rootId),
-              ])
-            }
-          >
-            <Plus className="size-3" />
-            Add filter
-          </Button>
-        </div>
-        <div className="max-h-36 space-y-1.5 overflow-auto px-2 py-2">
-          {!filters.length ? (
-            <p className="px-1 text-[11px] text-muted-foreground">
-              Optional WHERE conditions on included tables.
-            </p>
-          ) : (
-            filters.map((f, i) => {
-              const node =
-                includedNodes.find((n) => n.id === f.nodeId) ??
-                includedNodes[0];
-              const cols = node?.details?.columns ?? [];
-              const needsValue =
-                f.op !== "is_null" && f.op !== "is_not_null";
-              return (
-                <div
-                  key={f.id}
-                  className="flex flex-wrap items-center gap-1.5"
-                >
-                  {i > 0 ? (
+      {/* Filters + SQL always pinned at bottom of the panel */}
+      <div className="flex max-h-[38%] min-h-0 shrink-0 flex-col overflow-hidden border-t border-border">
+        <div
+          data-testid="relation-filters"
+          className="flex min-h-0 shrink-0 flex-col"
+        >
+          <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1">
+            <span className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+              Filters
+            </span>
+            <Button
+              size="xs"
+              variant="outline"
+              className="ml-auto"
+              disabled={!includedNodes.length}
+              onClick={() =>
+                setFilters((prev) => [
+                  ...prev,
+                  newFilter(includedNodes[0]?.id ?? graph.rootId),
+                ])
+              }
+            >
+              <Plus className="size-3" />
+              Add filter
+            </Button>
+          </div>
+          <div className="max-h-28 space-y-1.5 overflow-y-auto px-2 py-2">
+            {!filters.length ? (
+              <p className="px-1 text-[11px] text-muted-foreground">
+                Optional WHERE conditions on included tables.
+              </p>
+            ) : (
+              filters.map((f, i) => {
+                const node =
+                  includedNodes.find((n) => n.id === f.nodeId) ??
+                  includedNodes[0];
+                const cols = node?.details?.columns ?? [];
+                const needsValue =
+                  f.op !== "is_null" && f.op !== "is_not_null";
+                return (
+                  <div
+                    key={f.id}
+                    className="flex flex-wrap items-center gap-1.5"
+                  >
+                    {i > 0 ? (
+                      <select
+                        className="h-7 rounded-md border border-border bg-background px-1.5 font-mono text-[10px]"
+                        value={f.join ?? "and"}
+                        onChange={(e) =>
+                          patchFilter(f.id, {
+                            join: e.target.value as "and" | "or",
+                          })
+                        }
+                      >
+                        <option value="and">AND</option>
+                        <option value="or">OR</option>
+                      </select>
+                    ) : (
+                      <span className="w-10 text-center text-[10px] text-muted-foreground">
+                        WHERE
+                      </span>
+                    )}
                     <select
-                      className="h-7 rounded-md border border-border bg-background px-1.5 font-mono text-[10px]"
-                      value={f.join ?? "and"}
+                      className="h-7 max-w-[7rem] rounded-md border border-border bg-background px-1.5 font-mono text-[10px]"
+                      value={f.nodeId}
+                      onChange={(e) => {
+                        const nodeId = e.target.value;
+                        patchFilter(f.id, { nodeId, column: "" });
+                      }}
+                    >
+                      {includedNodes.map((n) => (
+                        <option key={n.id} value={n.id}>
+                          {n.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="h-7 max-w-[8rem] rounded-md border border-border bg-background px-1.5 font-mono text-[10px]"
+                      value={f.column}
                       onChange={(e) =>
-                        patchFilter(f.id, {
-                          join: e.target.value as "and" | "or",
-                        })
+                        patchFilter(f.id, { column: e.target.value })
                       }
                     >
-                      <option value="and">AND</option>
-                      <option value="or">OR</option>
+                      <option value="">column…</option>
+                      {cols.map((c) => (
+                        <option key={c.name} value={c.name}>
+                          {c.name}
+                        </option>
+                      ))}
                     </select>
-                  ) : (
-                    <span className="w-10 text-center text-[10px] text-muted-foreground">
-                      WHERE
-                    </span>
-                  )}
-                  <select
-                    className="h-7 max-w-[7rem] rounded-md border border-border bg-background px-1.5 font-mono text-[10px]"
-                    value={f.nodeId}
-                    onChange={(e) => {
-                      const nodeId = e.target.value;
-                      patchFilter(f.id, { nodeId, column: "" });
-                    }}
-                  >
-                    {includedNodes.map((n) => (
-                      <option key={n.id} value={n.id}>
-                        {n.name}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="h-7 max-w-[8rem] rounded-md border border-border bg-background px-1.5 font-mono text-[10px]"
-                    value={f.column}
-                    onChange={(e) =>
-                      patchFilter(f.id, { column: e.target.value })
-                    }
-                  >
-                    <option value="">column…</option>
-                    {cols.map((c) => (
-                      <option key={c.name} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="h-7 rounded-md border border-border bg-background px-1.5 font-mono text-[10px]"
-                    value={f.op}
-                    onChange={(e) =>
-                      patchFilter(f.id, { op: e.target.value as FilterOp })
-                    }
-                  >
-                    {FILTER_OPS.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                  {needsValue ? (
-                    <Input
-                      className="h-7 max-w-[9rem] font-mono text-[11px]"
-                      value={f.value ?? ""}
-                      placeholder="value"
+                    <select
+                      className="h-7 rounded-md border border-border bg-background px-1.5 font-mono text-[10px]"
+                      value={f.op}
                       onChange={(e) =>
-                        patchFilter(f.id, { value: e.target.value })
+                        patchFilter(f.id, { op: e.target.value as FilterOp })
                       }
-                    />
-                  ) : null}
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    title="Remove filter"
-                    onClick={() =>
-                      setFilters((prev) => prev.filter((x) => x.id !== f.id))
-                    }
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
-                </div>
-              );
-            })
-          )}
+                    >
+                      {FILTER_OPS.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    {needsValue ? (
+                      <Input
+                        className="h-7 max-w-[9rem] font-mono text-[11px]"
+                        value={f.value ?? ""}
+                        placeholder="value"
+                        onChange={(e) =>
+                          patchFilter(f.id, { value: e.target.value })
+                        }
+                      />
+                    ) : null}
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      title="Remove filter"
+                      onClick={() =>
+                        setFilters((prev) => prev.filter((x) => x.id !== f.id))
+                      }
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
-      </div>
 
-      <div className="shrink-0 border-t border-border">
-        <div className="border-b border-border px-3 py-1 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
-          SQL preview
+        <div className="flex min-h-0 flex-1 flex-col border-t border-border">
+          <div className="shrink-0 border-b border-border px-3 py-1 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+            SQL preview
+          </div>
+          <pre
+            data-testid="relation-sql-preview"
+            className="min-h-0 flex-1 overflow-auto bg-card/50 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap"
+          >
+            {sql || "—"}
+          </pre>
         </div>
-        <pre
-          data-testid="relation-sql-preview"
-          className="max-h-40 overflow-auto bg-card/50 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap"
-        >
-          {sql || "—"}
-        </pre>
       </div>
     </div>
   );

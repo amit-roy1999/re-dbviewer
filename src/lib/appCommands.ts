@@ -332,6 +332,14 @@ export function buildAppCommands(): AppCommand[] {
       keywords: ["seed", "generate"],
       run: (c) => c.setTool("fakeData"),
     }),
+    cmd({
+      id: "tools.visualize",
+      title: "Visualize Data…",
+      group: "Tools",
+      when: "connected",
+      keywords: ["chart", "graph", "vega", "plot", "bar", "line"],
+      run: (c) => c.setTool("visualize"),
+    }),
   ];
 
   for (const group of ADMIN_NAV) {

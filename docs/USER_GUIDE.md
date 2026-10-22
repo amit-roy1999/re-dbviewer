@@ -47,7 +47,7 @@ Top of the window:
 | **Edit** | Format SQL (`Ctrl+Shift+F`), Undo / Redo (editor), Cut / Copy / Paste (act on the last focused editor or text field). |
 | **Query** | Run Script (`Ctrl+Shift+Enter`), Stop, Begin / Commit / Rollback. |
 | **View** | Toggle History, Snippets, Context Help; **Command palette…** (`Ctrl+K` — search app features/menus/settings, not DB rows); Search Data… (`Ctrl+Shift+H`); Inspect Table…; Schema Inspector…; Preferences…; **Keyboard shortcuts…**; Toggle theme. |
-| **Tools** | Server Admin (Workbench Administration), EER Diagram, Schema Compare, Migration Wizard, Fake Data Factory. See [Tools](#tools) and [Administration](#administration). |
+| **Tools** | Server Admin (Workbench Administration), EER Diagram, Schema Compare, Migration Wizard, Fake Data Factory, **Visualize Data**. See [Tools](#tools) and [Administration](#administration). |
 
 `Ctrl+T/W/O/S/Shift+S/Shift+F/K` also work from the keyboard (⌘ on macOS). **View → Keyboard shortcuts…** lists them all (including `Ctrl+Enter`, `Ctrl+Shift+Enter`, `Ctrl+Shift+Q`, `Ctrl+,`, `Ctrl+K`). **Command palette** finds menus, tools, admin views, preferences, and **table/view names** on the front connection (type to filter); it does **not** search row values (use **Search Data** for that).
 
@@ -68,10 +68,11 @@ The home screen lists saved connections.
    - **SSL mode** + CA / client cert / client key paths (PEM). PostgreSQL uses all three; MySQL/MariaDB uses the CA only (client cert/key are saved but not used).
    - **Unix socket** — MySQL socket file or PostgreSQL socket directory.
    - **SSH host / user / port / private key** — opens a tunnel with your system `ssh` (key auth only) and connects through it.
-5. Choose **Allowed actions** (permissions).
-6. **Test**, then **Save**.
+5. For server engines, optionally check **Store in Vault** (on by default). When the OS keyring works, passwords go there; otherwise they use the encrypted **app vault** (master password, session unlock). Uncheck to not persist the password.
+6. Choose **Allowed actions** (permissions).
+7. **Test**, then **Save**.
 
-Passwords are saved in the **OS keyring** when available (otherwise in the local app database).
+Passwords are **never** stored as plaintext in the connections database. Prefer the OS keyring (macOS Keychain / Windows Credential Manager / Linux Secret Service). If the keyring is unavailable, the app prompts for a vault master password and stores ciphertext in an app-data vault file. Use **Clear stored password** on the edit form to remove a saved secret.
 
 ### Connection URLs
 
@@ -315,6 +316,7 @@ Open from the **Tools** menu; they act on the connection tab in front.
 - **EER Diagram**: reverse engineers tables and foreign keys into a read-only diagram. **Forward engineer → query tab** generates CREATE TABLE / FK / index SQL from the diagram; **Copy SQL** copies it. **Validate** lists tables without a primary key and foreign keys to missing tables; **Export SVG** saves the diagram.
 - **Schema Compare**: compares the current schema (A) with another schema, another saved connection, or a `.sql` file (B) and lists missing tables/columns, type differences and (when B is a schema or connection) index-name and foreign-key-name differences.
 - **Migration Wizard**: choose source and target saved connections, list and tick tables, then create tables and/or copy data in batches. Same-engine pairs copy the source DDL. For different engines, tables are created from mapped column types (editable **Type mapping** rules; only NOT NULL and primary keys carry over). A progress line shows `table i/n, rows copied`. Sessions the wizard opens are closed afterwards.
+- **Visualize Data**: pick a root table, include related tables via the same FK graph as Structure → Relations, run the query (row limit), map columns to a chart (bar / line / area / scatter / pie / heatmap / table), preview with Vega-Lite. **Save…** writes a `.rdbviz.json` recipe (query model + chart; connection name/engine hint only — no passwords) so you can **Open…** later and recreate. **Export Vega-Lite…** writes a portable `.vl.json` with data for other tools.
 - **Fake Data Factory**: seed tables with synthetic rows (Rust batch inserts).
   1. Check tables on the left (search to filter). **+ related** adds FK parents/children.
   2. Set row counts (presets or per table). Choose **Append** (keeps data; IDs continue after max) or **Clear, then fill** (needs DELETE/DDL; confirms first).
@@ -350,7 +352,7 @@ re-dbviewer writes a **local-only** error log while you use the app. Nothing is 
 - Routine editor is MySQL / MariaDB only (no triggers; events via New event).
 - SQLite cannot change column type / nullability / default or add / drop foreign keys via ALTER (the editor emits a comment instead).
 - Query-tab SQL is not persisted across app restarts (use Save); history and snippets are.
-- If no OS keyring is available (e.g. no Secret Service on Linux), passwords fall back to the local app SQLite database.
+- If no OS keyring is available (e.g. no Secret Service on Linux), passwords fall back to the encrypted app vault (not plaintext SQLite). Unlock the vault when opening or saving those connections.
 - SSH tunnels need the `ssh` binary and a key file; password auth is not supported.
 
 ---

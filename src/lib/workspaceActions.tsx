@@ -32,6 +32,8 @@ export type WorkspaceActions = {
   openTable?: (ref: string) => void;
   /** Open SQL text in a new query tab (used by EER forward-engineer). */
   openSqlInTab?: (sql: string) => void;
+  /** Open Visualize Data as a workspace tab (closes the tools dialog if open). */
+  openVisualizeTab?: () => void;
 };
 
 const Ctx = createContext<WorkspaceActions | null>(null);

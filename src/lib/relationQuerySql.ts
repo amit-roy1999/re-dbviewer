@@ -1,4 +1,4 @@
-import { quoteIdent, sqlLiteral } from "@/lib/dbApi";
+import { quoteIdent, shortName, sqlLiteral } from "@/lib/dbApi";
 import type { FilterOp } from "@/types";
 import {
   edgeBetween,
@@ -6,6 +6,12 @@ import {
   type RelationEdge,
   type RelationGraph,
 } from "@/lib/relationGraph";
+
+/** Quote a result-column alias that may contain dots (`table.column`). */
+function quoteResultAlias(engine: string, alias: string): string {
+  const q = engine === "mysql" || engine === "mariadb" ? "`" : '"';
+  return `${q}${alias.split(q).join(q + q)}${q}`;
+}
 
 export type JoinType = "LEFT" | "INNER";
 
@@ -115,8 +121,13 @@ export function buildRelationSelect(args: BuildRelationSelectArgs): string {
   for (const id of order) {
     const cols = selected[id] ?? [];
     const alias = aliasById.get(id)!;
+    const node = graph.nodes.find((n) => n.id === id);
+    const tableLabel = node?.name ?? shortName(node?.ref ?? id);
     for (const c of cols) {
-      selectParts.push(`${alias}.${quoteIdent(engine, c)}`);
+      const resultAlias = `${tableLabel}.${c}`;
+      selectParts.push(
+        `${alias}.${quoteIdent(engine, c)} AS ${quoteResultAlias(engine, resultAlias)}`,
+      );
     }
   }
   if (!selectParts.length) {

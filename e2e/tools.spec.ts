@@ -31,6 +31,29 @@ test("Tools → Fake Data Factory", async ({ page }) => {
   await expect(page.getByTestId("fake-data-factory")).toBeVisible();
 });
 
+test("Tools → Visualize Data", async ({ page }) => {
+  await openDemoWorkspace(page);
+  await openTool(page, /Visualize Data/i);
+  await expect(page.getByTestId("tool-host-visualize")).toBeVisible();
+  await expect(page.getByTestId("visualize-data")).toBeVisible();
+  await expect(page.getByTestId("visualize-schema")).toBeVisible();
+  await expect(page.getByTestId("visualize-table")).toBeVisible();
+  await expect(page.getByRole("button", { name: /1\.\s*Data/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /2\.\s*Chart/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /3\.\s*Preview/i })).toBeVisible();
+});
+
+test("Visualize Data → Open as tab", async ({ page }) => {
+  await openDemoWorkspace(page);
+  await openTool(page, /Visualize Data/i);
+  await expect(page.getByTestId("tool-host-visualize")).toBeVisible();
+  await page.getByTestId("visualize-open-as-tab").click();
+  await expect(page.getByTestId("tool-host-visualize")).toHaveCount(0);
+  await expect(page.getByTestId("visualize-tab-pane")).toBeVisible();
+  await expect(page.getByTestId("visualize-data")).toBeVisible();
+  await expect(page.getByTestId("visualize-open-as-tab")).toHaveCount(0);
+});
+
 test("Tools → Server Admin switches workspace mode", async ({ page }) => {
   await openDemoWorkspace(page);
   await openTool(page, /Server Admin/i);

@@ -360,6 +360,7 @@ export function AppMenuBar({
               ["compare", "Schema Compare…"],
               ["migrate", "Migration Wizard…"],
               ["fakeData", "Fake Data Factory…"],
+              ["visualize", "Visualize Data…"],
             ] as const
           ).map(([id, label]) => (
             <DropdownMenuItem

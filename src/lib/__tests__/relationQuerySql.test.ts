@@ -115,8 +115,9 @@ describe("buildRelationSelect", () => {
     expect(sql).toMatch(/FROM `orders` t0/);
     expect(sql).toMatch(/LEFT JOIN `users` t1/);
     expect(sql).toMatch(/t0\.`user_id` = t1\.`id`/);
-    expect(sql).toMatch(/t0\.`id`/);
-    expect(sql).toMatch(/t1\.`name`/);
+    expect(sql).toMatch(/t0\.`id` AS `orders\.id`/);
+    expect(sql).toMatch(/t0\.`total` AS `orders\.total`/);
+    expect(sql).toMatch(/t1\.`name` AS `users\.name`/);
   });
 
   it("defaults to root.* when nothing selected", () => {
@@ -145,6 +146,8 @@ describe("buildRelationSelect", () => {
       },
     });
     expect(sql).toMatch(/JOIN "payments"/);
+    expect(sql).toMatch(/t0\."id" AS "orders\.id"/);
+    expect(sql).toMatch(/t\d+\."amount" AS "payments\.amount"/);
     expect(sql).toMatch(/order_id/);
   });
 

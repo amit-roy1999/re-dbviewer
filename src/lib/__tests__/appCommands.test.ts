@@ -27,6 +27,7 @@ describe("appCommands", () => {
     const all = buildAppCommands();
     expect(all.some((c) => c.id === "file.prefs")).toBe(true);
     expect(all.some((c) => c.id === "admin.queryMonitor")).toBe(true);
+    expect(all.some((c) => c.id === "tools.visualize")).toBe(true);
   });
 
   it("gates connected and adminEngine commands", () => {

@@ -14,6 +14,7 @@ import type {
   Engine,
   Permissions,
   SavedConnection,
+  VaultStatus,
 } from "@/types";
 import {
   FULL_PERMISSIONS,
@@ -42,6 +43,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -53,6 +55,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+
+function needsVaultUnlock(err: unknown): boolean {
+  const s = String(err).toLowerCase();
+  return s.includes("vault is locked") || s.includes("unlock the vault");
+}
 
 type Props = {
   onOpen: (conn: SavedConnection) => void;
@@ -80,7 +87,7 @@ const ENGINES: { id: Engine; label: string; defaultPort?: number }[] = [
 
 function emptyDraft(): Draft {
   const engine: Engine = "sqlite";
-  const config: ConnectionConfig = { path: "" };
+  const config: ConnectionConfig = { path: "", storePassword: true };
   return {
     name: "",
     engine,
@@ -95,7 +102,14 @@ function emptyDraft(): Draft {
 
 function fromSaved(c: SavedConnection): Draft {
   const engine = c.engine as Engine;
-  const config = { ...c.config };
+  const config: ConnectionConfig = {
+    ...c.config,
+    storePassword: c.config.storePassword !== false,
+  };
+  // Editing: don't echo hydrated password into the form; blank keeps stored secret.
+  if (config.passwordInKeyring || config.passwordInVault) {
+    config.password = "";
+  }
   return {
     id: c.id,
     name: c.name,
@@ -123,6 +137,20 @@ export default function Home({ onOpen }: Props) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [vault, setVault] = useState<VaultStatus | null>(null);
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const [masterPw, setMasterPw] = useState("");
+  const [pendingAfterUnlock, setPendingAfterUnlock] = useState<
+    null | "save" | "clear" | { openId: string }
+  >(null);
+
+  async function reloadVault() {
+    try {
+      setVault(await invoke<VaultStatus>("vault_status"));
+    } catch {
+      /* ignore */
+    }
+  }
 
   async function reload() {
     const [conns, cats] = await Promise.all([
@@ -131,6 +159,7 @@ export default function Home({ onOpen }: Props) {
     ]);
     setList(conns);
     setCategories(cats);
+    await reloadVault();
   }
 
   useEffect(() => {
@@ -203,6 +232,9 @@ export default function Home({ onOpen }: Props) {
             sshPort: draft.config.sshPort,
             sshUser: draft.config.sshUser,
             sshKeyPath: draft.config.sshKeyPath,
+            passwordInKeyring: draft.config.passwordInKeyring,
+            passwordInVault: draft.config.passwordInVault,
+            storePassword: draft.config.storePassword ?? true,
           },
         }),
       );
@@ -231,7 +263,10 @@ export default function Home({ onOpen }: Props) {
         categoryId: draft.categoryId,
         isFavorite: draft.isFavorite,
         accentColor: draft.accentColor,
-        config: draft.config,
+        config: {
+          ...draft.config,
+          storePassword: draft.config.storePassword !== false,
+        },
         permissions: draft.permissions,
       };
       if (draft.id) {
@@ -242,6 +277,68 @@ export default function Home({ onOpen }: Props) {
       setDraft(null);
       setStatus("Connection saved.");
       await reload();
+    } catch (e) {
+      if (needsVaultUnlock(e)) {
+        setPendingAfterUnlock("save");
+        setUnlockOpen(true);
+        setError("");
+      } else {
+        setError(String(e));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearStoredPassword() {
+    if (!draft?.id) return;
+    setBusy(true);
+    setError("");
+    try {
+      await invoke("clear_connection_password", { id: draft.id });
+      setDraft({
+        ...draft,
+        config: {
+          ...draft.config,
+          password: "",
+          passwordInKeyring: false,
+          passwordInVault: false,
+          storePassword: false,
+        },
+      });
+      setStatus("Stored password cleared.");
+      await reload();
+    } catch (e) {
+      if (needsVaultUnlock(e)) {
+        setPendingAfterUnlock("clear");
+        setUnlockOpen(true);
+      } else {
+        setError(String(e));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmUnlock() {
+    setBusy(true);
+    setError("");
+    try {
+      const st = await invoke<VaultStatus>("vault_unlock", {
+        masterPassword: masterPw,
+      });
+      setVault(st);
+      setMasterPw("");
+      setUnlockOpen(false);
+      const pending = pendingAfterUnlock;
+      setPendingAfterUnlock(null);
+      if (pending === "save") {
+        await saveDraft();
+      } else if (pending === "clear") {
+        await clearStoredPassword();
+      } else if (pending && "openId" in pending) {
+        await openConn(pending.openId);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -274,8 +371,14 @@ export default function Home({ onOpen }: Props) {
     try {
       onOpen(await invoke<SavedConnection>("open_connection", { id }));
     } catch (e) {
-      setError(String(e));
-      logError("open_connection failed");
+      if (needsVaultUnlock(e)) {
+        setPendingAfterUnlock({ openId: id });
+        setUnlockOpen(true);
+        setError("");
+      } else {
+        setError(String(e));
+        logError("open_connection failed");
+      }
     } finally {
       setBusy(false);
     }
@@ -567,10 +670,70 @@ export default function Home({ onOpen }: Props) {
             {hasSsh
               ? "SSH tunnel uses the system `ssh` binary with key auth (no password prompt); the database host/port above is resolved from the SSH server."
               : "Optional. Leave SSH host empty for a direct connection."}{" "}
-            Passwords are stored in the OS keyring when available.
+            Prefer storing passwords via Store in Vault below (OS keyring when
+            available, otherwise the encrypted app vault).
           </p>
         </div>
       </details>
+    );
+  }
+
+  function passwordStoreControls() {
+    if (!draft || draft.engine === "sqlite") return null;
+    const storeOn = draft.config.storePassword !== false;
+    const stored =
+      !!draft.config.passwordInKeyring || !!draft.config.passwordInVault;
+    const storeLabel = vault?.keyringAvailable
+      ? "Store in Vault (OS Keychain / Credential Manager)"
+      : "Store in Vault (encrypted app vault)";
+    return (
+      <div className="grid gap-1.5 sm:col-span-2">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={storeOn}
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                config: {
+                  ...draft.config,
+                  storePassword: e.target.checked,
+                },
+              })
+            }
+          />
+          {storeLabel}
+        </label>
+        {stored ? (
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            <span>
+              Password stored securely
+              {draft.config.passwordInKeyring
+                ? " (OS keyring)"
+                : " (app vault)"}
+              .
+            </span>
+            {draft.id ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-6 px-2 text-[11px]"
+                disabled={busy}
+                onClick={() => void clearStoredPassword()}
+              >
+                Clear stored password
+              </Button>
+            ) : null}
+          </div>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            {storeOn
+              ? "Password is never saved as plaintext. Leave blank when editing to keep the current stored secret."
+              : "Password will not be persisted — enter it again when connecting."}
+          </p>
+        )}
+      </div>
     );
   }
 
@@ -882,8 +1045,15 @@ export default function Home({ onOpen }: Props) {
                           }),
                         )
                       }
+                      placeholder={
+                        draft.config.passwordInKeyring ||
+                        draft.config.passwordInVault
+                          ? "(stored securely)"
+                          : undefined
+                      }
                     />
                   </div>
+                  {passwordStoreControls()}
                 </div>
               )}
 
@@ -972,6 +1142,67 @@ export default function Home({ onOpen }: Props) {
             </Button>
             <Button type="button" disabled={busy} onClick={saveDraft}>
               Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={unlockOpen}
+        onOpenChange={(o) => {
+          if (!o) {
+            setUnlockOpen(false);
+            setMasterPw("");
+            setPendingAfterUnlock(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {vault?.exists ? "Unlock password vault" : "Create password vault"}
+            </DialogTitle>
+            <DialogDescription>
+              {vault?.exists
+                ? "Enter your vault master password. It stays in memory for this session only."
+                : "OS keyring is unavailable. Choose a master password to create a local encrypted vault (never synced)."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="vault-master">Master password</Label>
+            <Input
+              id="vault-master"
+              type="password"
+              value={masterPw}
+              autoFocus
+              onChange={(e) => setMasterPw(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void confirmUnlock();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                setUnlockOpen(false);
+                setMasterPw("");
+                setPendingAfterUnlock(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={busy || !masterPw.trim()}
+              onClick={() => void confirmUnlock()}
+            >
+              {vault?.exists ? "Unlock" : "Create & unlock"}
             </Button>
           </DialogFooter>
         </DialogContent>

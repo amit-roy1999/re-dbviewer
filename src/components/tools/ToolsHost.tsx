@@ -10,8 +10,15 @@ import { EerDiagram } from "@/components/tools/EerDiagram";
 import { SchemaCompare } from "@/components/tools/SchemaCompare";
 import { MigrationWizard } from "@/components/tools/MigrationWizard";
 import { FakeDataFactory } from "@/components/tools/FakeDataFactory";
+import { VisualizeData } from "@/components/tools/VisualizeData";
 
-export type ToolId = "admin" | "eer" | "compare" | "migrate" | "fakeData";
+export type ToolId =
+  | "admin"
+  | "eer"
+  | "compare"
+  | "migrate"
+  | "fakeData"
+  | "visualize";
 
 const TITLES: Record<ToolId, string> = {
   admin: "Server Admin",
@@ -19,6 +26,7 @@ const TITLES: Record<ToolId, string> = {
   compare: "Schema Compare",
   migrate: "Migration Wizard",
   fakeData: "Fake Data Factory",
+  visualize: "Visualize Data",
 };
 
 /** Full-size dialog hosting the admin/modeling tools; they act on the front connection. */
@@ -35,9 +43,9 @@ export function ToolsHost({
     <Dialog open={tool != null && connection != null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent
         data-testid={tool ? `tool-host-${tool}` : "tool-host"}
-        className="flex h-[88vh] flex-col sm:max-w-[min(1200px,94vw)]"
+        className="flex! h-[88vh] max-h-[88vh] flex-col gap-2 overflow-hidden sm:max-w-[min(1200px,94vw)]"
       >
-        <DialogHeader>
+        <DialogHeader className="shrink-0">
           <DialogTitle>
             {tool ? TITLES[tool] : ""}
             {connection ? (
@@ -47,7 +55,7 @@ export function ToolsHost({
             ) : null}
           </DialogTitle>
         </DialogHeader>
-        <div className="min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {connection && tool === "admin" ? <AdminPanel connection={connection} /> : null}
           {connection && tool === "eer" ? (
             <EerDiagram connection={connection} onClose={onClose} />
@@ -56,6 +64,12 @@ export function ToolsHost({
           {connection && tool === "migrate" ? <MigrationWizard connection={connection} /> : null}
           {connection && tool === "fakeData" ? (
             <FakeDataFactory connection={connection} />
+          ) : null}
+          {connection && tool === "visualize" ? (
+            <VisualizeData
+              connection={connection}
+              onMovedToTab={onClose}
+            />
           ) : null}
         </div>
       </DialogContent>

@@ -3,8 +3,10 @@ mod diagnostics;
 
 use db::{
     fake_data::{FakeDataPlan, FakeDataResult},
-    keyring_store, test_engine, AppStore, Category, ConnectionConfig, Permissions, QueryResult,
-    SavedConnection, SchemaNode, SessionState, TableDetails, TableFilter, TableSort,
+    keyring_store,
+    vault::{self, VaultStatus},
+    test_engine, AppStore, Category, ConnectionConfig, Permissions, QueryResult, SavedConnection,
+    SchemaNode, SessionState, TableDetails, TableFilter, TableSort,
 };
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -14,36 +16,153 @@ struct AppState {
     session: SessionState,
 }
 
-/// Fill `config.password` from the OS keyring when the saved row says it lives there.
+/// Fill `config.password` from keyring or unlocked vault.
 fn hydrate(mut c: SavedConnection) -> SavedConnection {
-    if c.config.password_in_keyring && c.config.password.as_deref().unwrap_or("").is_empty() {
-        c.config.password = keyring_store::get(&c.id);
+    let empty = c.config.password.as_deref().unwrap_or("").is_empty();
+    if !empty {
+        // Legacy plaintext still in SQLite — expose for this session; migrate on save.
+        return c;
+    }
+    if c.config.password_in_keyring {
+        if let Some(pw) = keyring_store::get(&c.id) {
+            c.config.password = Some(pw);
+            return c;
+        }
+    }
+    if c.config.password_in_vault {
+        let id = c.id.clone();
+        if let Ok(Ok(Some(pw))) = vault::with_vault(|v| {
+            if !v.is_unlocked() {
+                return Ok(None);
+            }
+            v.get(&id)
+        }) {
+            c.config.password = Some(pw);
+        }
     }
     c
 }
 
-/// Move the password into the keyring. Returns the config to persist:
-/// password stripped + flag set on success; unchanged (plaintext fallback) when no keyring.
-fn secure_config(id: &str, mut config: ConnectionConfig) -> ConnectionConfig {
+/// Persist password to OS keyring, else encrypted vault. Never keeps plaintext in config_json.
+fn secure_config(id: &str, mut config: ConnectionConfig) -> Result<ConnectionConfig, String> {
+    let store = config.store_password;
     let pw = config.password.clone().unwrap_or_default();
-    if pw.is_empty() {
+
+    if !store {
         keyring_store::delete(id);
+        let _ = vault::with_vault(|v| {
+            if v.is_unlocked() {
+                let _ = v.delete(id);
+            }
+        });
+        config.password = None;
         config.password_in_keyring = false;
-        return config;
+        config.password_in_vault = false;
+        config.store_password = false;
+        return Ok(config);
     }
+
+    if pw.is_empty() {
+        config.password = None;
+        return Ok(config);
+    }
+
     if keyring_store::set(id, &pw).is_ok() {
+        let _ = vault::with_vault(|v| {
+            if v.is_unlocked() {
+                let _ = v.delete(id);
+            }
+        });
         config.password = None;
         config.password_in_keyring = true;
-    } else {
-        config.password_in_keyring = false;
+        config.password_in_vault = false;
+        config.store_password = true;
+        return Ok(config);
     }
-    config
+
+    vault::with_vault(|v| {
+        if !v.is_unlocked() {
+            return Err(
+                "OS keyring unavailable and vault is locked. Unlock the vault (or create one) to store the password securely."
+                    .into(),
+            );
+        }
+        v.set(id, &pw)
+    })??;
+
+    keyring_store::delete(id);
+    config.password = None;
+    config.password_in_keyring = false;
+    config.password_in_vault = true;
+    config.store_password = true;
+    Ok(config)
+}
+
+/// Persist config with secrets stripped; migrate legacy plaintext into keyring/vault.
+fn persist_secured(
+    store: &AppStore,
+    id: &str,
+    name: &str,
+    engine: &str,
+    category_id: Option<&str>,
+    is_favorite: bool,
+    accent: &str,
+    config: ConnectionConfig,
+    permissions: &Permissions,
+) -> Result<ConnectionConfig, String> {
+    let secured = secure_config(id, config)?;
+    store.update(
+        id,
+        name,
+        engine,
+        category_id,
+        is_favorite,
+        accent,
+        &secured,
+        permissions,
+    )?;
+    Ok(secured)
+}
+
+/// Migrate legacy plaintext passwords out of SQLite into keyring/vault when possible.
+fn migrate_legacy_plaintext(
+    store: &AppStore,
+    mut c: SavedConnection,
+) -> SavedConnection {
+    let has_pw = !c.config.password.as_deref().unwrap_or("").is_empty();
+    let flagged = c.config.password_in_keyring || c.config.password_in_vault;
+    if !has_pw || flagged {
+        return c;
+    }
+    c.config.store_password = true;
+    match persist_secured(
+        store,
+        &c.id,
+        &c.name,
+        &c.engine,
+        c.category_id.as_deref(),
+        c.is_favorite,
+        &c.accent_color,
+        c.config.clone(),
+        &c.permissions,
+    ) {
+        Ok(secured) => {
+            c.config = secured;
+            hydrate(c)
+        }
+        Err(_) => c,
+    }
 }
 
 #[tauri::command]
 fn list_connections(state: State<'_, AppState>) -> Result<Vec<SavedConnection>, String> {
-    let list = state.store.lock().map_err(|e| e.to_string())?.list()?;
-    Ok(list.into_iter().map(hydrate).collect())
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let list = store.list()?;
+    Ok(list
+        .into_iter()
+        .map(|c| migrate_legacy_plaintext(&store, c))
+        .map(hydrate)
+        .collect())
 }
 
 #[tauri::command]
@@ -108,26 +227,25 @@ fn save_connection(
         &ConnectionConfig {
             password: None,
             password_in_keyring: false,
+            password_in_vault: false,
             ..config.clone()
         },
         &permissions,
     )?;
-    if config.password.as_deref().unwrap_or("").is_empty() {
-        return Ok(saved);
-    }
-    let secured = secure_config(&saved.id, config.clone());
-    store.update(
+    let secured = persist_secured(
+        &store,
         &saved.id,
         &name,
         &engine,
         category_id.as_deref(),
         is_favorite,
         accent,
-        &secured,
+        config.clone(),
         &permissions,
     )?;
-    saved.config = config;
-    Ok(saved)
+    saved.config = secured;
+    // Return hydrated password for immediate connect UX when store=true.
+    Ok(hydrate(saved))
 }
 
 #[tauri::command]
@@ -160,17 +278,28 @@ fn update_connection(
     config: ConnectionConfig,
     permissions: Permissions,
 ) -> Result<(), String> {
-    let config = secure_config(&id, config);
-    state.store.lock().map_err(|e| e.to_string())?.update(
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    // Preserve storage flags when password field left blank and store remains on.
+    let mut cfg = config;
+    if cfg.store_password
+        && cfg.password.as_deref().unwrap_or("").is_empty()
+    {
+        let existing = store.get(&id)?;
+        cfg.password_in_keyring = existing.config.password_in_keyring;
+        cfg.password_in_vault = existing.config.password_in_vault;
+    }
+    persist_secured(
+        &store,
         &id,
         &name,
         &engine,
         category_id.as_deref(),
         is_favorite,
         accent_color.as_deref().unwrap_or("#2563eb"),
-        &config,
+        cfg,
         &permissions,
-    )
+    )?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -189,8 +318,70 @@ fn set_favorite(
 #[tauri::command]
 fn delete_connection(state: State<'_, AppState>, id: String) -> Result<(), String> {
     keyring_store::delete(&id);
+    let _ = vault::with_vault(|v| {
+        if v.is_unlocked() {
+            let _ = v.delete(&id);
+        }
+    });
     let _ = state.session.close_id(Some(&id));
     state.store.lock().map_err(|e| e.to_string())?.delete(&id)
+}
+
+#[tauri::command]
+fn clear_connection_password(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let mut conn = store.get(&id)?;
+    keyring_store::delete(&id);
+    if conn.config.password_in_vault {
+        vault::with_vault(|v| {
+            if !v.is_unlocked() {
+                return Err(
+                    "Password is in the app vault but the vault is locked. Unlock the vault first."
+                        .into(),
+                );
+            }
+            v.delete(&id)
+        })??;
+    }
+    conn.config.password = None;
+    conn.config.password_in_keyring = false;
+    conn.config.password_in_vault = false;
+    conn.config.store_password = false;
+    store.update(
+        &id,
+        &conn.name,
+        &conn.engine,
+        conn.category_id.as_deref(),
+        conn.is_favorite,
+        &conn.accent_color,
+        &conn.config,
+        &conn.permissions,
+    )
+}
+
+#[tauri::command]
+fn vault_status() -> Result<VaultStatus, String> {
+    let keyring_available = keyring_store::available();
+    vault::with_vault(|v| v.status(keyring_available))
+}
+
+#[tauri::command]
+fn vault_unlock(master_password: String) -> Result<VaultStatus, String> {
+    vault::with_vault(|v| {
+        v.unlock_or_create(&master_password)?;
+        Ok(v.status(keyring_store::available()))
+    })?
+}
+
+#[tauri::command]
+fn vault_lock() -> Result<VaultStatus, String> {
+    vault::with_vault(|v| {
+        v.lock();
+        Ok(v.status(keyring_store::available()))
+    })?
 }
 
 #[tauri::command]
@@ -207,6 +398,14 @@ fn test_connection(engine: String, config: ConnectionConfig) -> Result<String, S
 #[tauri::command]
 fn open_connection(state: State<'_, AppState>, id: String) -> Result<SavedConnection, String> {
     let conn = hydrate(state.store.lock().map_err(|e| e.to_string())?.get(&id)?);
+    if conn.config.password_in_vault
+        && conn.config.password.as_deref().unwrap_or("").is_empty()
+    {
+        return Err(
+            "Password is in the app vault but the vault is locked. Unlock the vault first."
+                .into(),
+        );
+    }
     let engine = conn.engine.clone();
     match state.session.open(conn.clone()) {
         Ok(()) => Ok(conn),
@@ -395,6 +594,7 @@ pub fn run() {
             if let Err(e) = diagnostics::init(&data_dir) {
                 eprintln!("diagnostics init failed: {e}");
             }
+            vault::init(data_dir.join("password-vault.json"));
             let store = match AppStore::open(data_dir) {
                 Ok(s) => s,
                 Err(e) => {
@@ -418,6 +618,10 @@ pub fn run() {
             update_connection,
             set_favorite,
             delete_connection,
+            clear_connection_password,
+            vault_status,
+            vault_unlock,
+            vault_lock,
             test_connection,
             duplicate_connection,
             open_connection,

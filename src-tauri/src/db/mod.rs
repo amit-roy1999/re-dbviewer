@@ -4,6 +4,7 @@ mod engines;
 pub mod fake_data;
 mod permissions;
 pub mod secrets;
+pub mod vault;
 mod session;
 mod transfer;
 mod tunnel;

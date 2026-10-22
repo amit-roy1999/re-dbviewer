@@ -48,6 +48,7 @@ import {
   Trash2,
   Database,
   MoreHorizontal,
+  BarChart3,
 } from "lucide-react";
 import {
   open,
@@ -70,6 +71,7 @@ import { ResultGrid } from "@/components/ResultGrid";
 import { VisualExplain } from "@/components/VisualExplain";
 import { JsonResultView } from "@/components/JsonResultView";
 import { RelationQueryBuilder } from "@/components/RelationQueryBuilder";
+import { VisualizeData } from "@/components/tools/VisualizeData";
 import { QueryHistoryPanel } from "@/components/QueryHistoryPanel";
 import { SnippetsPanel } from "@/components/SnippetsPanel";
 import { ResultPinBar, type PinnedResult } from "@/components/ResultPinBar";
@@ -301,6 +303,10 @@ type RoutineTab = {
   body: string;
   mode: "create" | "alter";
 };
+type VisualizeTab = {
+  kind: "visualize";
+  id: string;
+};
 
 type Tab =
   | SqlTab
@@ -308,7 +314,8 @@ type Tab =
   | StructureTab
   | TableEditTab
   | ViewEditTab
-  | RoutineTab;
+  | RoutineTab
+  | VisualizeTab;
 
 /** Outcome of one statement in "Run script". */
 type StatementResult = {
@@ -1000,6 +1007,17 @@ export default function Workspace({
       );
       void loadTable(table, 0, filters, null);
     }
+  }
+
+  function openVisualizeTab() {
+    setWorkspaceMode("objects");
+    const id = "visualize-1";
+    setTabs((prev) =>
+      prev.some((t) => t.id === id)
+        ? prev
+        : [...prev, { kind: "visualize", id }],
+    );
+    setActive(id);
   }
 
   function openStructure(table: string) {
@@ -3226,6 +3244,7 @@ export default function Workspace({
         openData(ref);
       },
       openSqlInTab: (sql: string) => void newQueryTab(sql),
+      openVisualizeTab: () => openVisualizeTab(),
     };
   });
 
@@ -3257,6 +3276,7 @@ export default function Workspace({
       openAdminView: (id) => actionsRef.current?.openAdminView?.(id),
       openTable: (ref) => actionsRef.current?.openTable?.(ref),
       openSqlInTab: (sql) => actionsRef.current?.openSqlInTab?.(sql),
+      openVisualizeTab: () => actionsRef.current?.openVisualizeTab?.(),
     };
     onActionsReadyRef.current?.(stable);
 
@@ -3889,6 +3909,8 @@ export default function Workspace({
                           <Eye className="size-3.5" />
                         ) : t.kind === "routine" ? (
                           <Code2 className="size-3.5" />
+                        ) : t.kind === "visualize" ? (
+                          <BarChart3 className="size-3.5" />
                         ) : (
                           <Wrench className="size-3.5" />
                         )}
@@ -3905,7 +3927,9 @@ export default function Workspace({
                                   ? t.name.trim() || "New view"
                                   : t.kind === "routine"
                                     ? t.name.trim() || `New ${t.routineKind}`
-                                    : shortTable(t.table)}
+                                    : t.kind === "visualize"
+                                      ? "Visualize"
+                                      : shortTable(t.table)}
                         </span>
                         {closable ? (
                           <span
@@ -4943,13 +4967,15 @@ export default function Workspace({
 
               {activeTab.section === "relations" ? (
                 details ? (
-                  <RelationQueryBuilder
-                    table={activeTab.table}
-                    engine={engine}
-                    connectionId={connection.id}
-                    details={details}
-                    onOpenSql={(sqlText) => newQueryTab(sqlText)}
-                  />
+                  <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+                    <RelationQueryBuilder
+                      table={activeTab.table}
+                      engine={engine}
+                      connectionId={connection.id}
+                      details={details}
+                      onOpenSql={(sqlText) => newQueryTab(sqlText)}
+                    />
+                  </div>
                 ) : (
                   <div className="p-4 text-sm text-muted-foreground">
                     Loading table metadata…
@@ -5029,6 +5055,15 @@ export default function Workspace({
             />
           ) : null}
 
+          {activeTab?.kind === "visualize" ? (
+            <div
+              data-testid="visualize-tab-pane"
+              className="flex min-h-0 flex-1 flex-col overflow-hidden p-2"
+            >
+              <VisualizeData connection={connection} embedded />
+            </div>
+          ) : null}
+
           <QueryHistoryPanel
             entries={history}
             open={historyOpen}
@@ -5067,6 +5102,8 @@ export default function Workspace({
             <span className="text-muted-foreground">View editor</span>
           ) : activeTab?.kind === "routine" ? (
             <span className="text-muted-foreground">Routine editor</span>
+          ) : activeTab?.kind === "visualize" ? (
+            <span className="text-muted-foreground">Visualize Data</span>
           ) : (
             <span className="text-muted-foreground">Query</span>
           )}

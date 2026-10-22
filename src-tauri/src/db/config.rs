@@ -40,6 +40,16 @@ pub struct ConnectionConfig {
     /// True when the password lives in the OS keyring (never persisted in config_json).
     #[serde(default)]
     pub password_in_keyring: bool,
+    /// True when the password lives in the encrypted app vault (fallback).
+    #[serde(default)]
+    pub password_in_vault: bool,
+    /// Frontend hint: when false on save, clear any stored password. Not persisted meaningfully.
+    #[serde(default = "default_store_password")]
+    pub store_password: bool,
+}
+
+fn default_store_password() -> bool {
+    true
 }
 
 impl ConnectionConfig {
